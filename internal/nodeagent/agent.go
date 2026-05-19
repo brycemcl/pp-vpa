@@ -164,7 +164,7 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 		qos: p.Status.QOSClass, cgroupPath: slice,
 		isWindows:  isWindows,
 		containers: containers,
-		cpu: cs, mem: mp,
+		cpu:        cs, mem: mp,
 		cpuWatermark: watermark.New(time.Hour),
 		memWatermark: watermark.New(24 * time.Hour),
 	}
