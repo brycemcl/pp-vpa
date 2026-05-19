@@ -17,11 +17,12 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -33,7 +34,7 @@ import (
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/oom"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/patcher"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/psi"
-	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/validate"
+	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/trigger"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/watermark"
 	"github.com/brycemclachlan/pp-vpa/internal/recommender/histogram"
 )
@@ -47,14 +48,6 @@ type Config struct {
 	CheckpointEvery time.Duration
 }
 
-// containerMeta holds per-container metadata needed for resize validation.
-type containerMeta struct {
-	containerType  validate.ContainerType
-	currentCPU     resource.Quantity
-	currentMemory  resource.Quantity
-	resizePolicies []corev1.ContainerResizePolicy
-}
-
 // podState is the per-pod telemetry held by the agent.
 type podState struct {
 	uid          string
@@ -63,14 +56,28 @@ type podState struct {
 	prrName      string
 	qos          corev1.PodQOSClass
 	cgroupPath   string
-	isWindows    bool
-	containers   map[string]containerMeta
 	cpu          *ingest.CPUStream
 	mem          *ingest.MemoryPeakExtractor
 	cpuWatermark *watermark.Watermark
 	memWatermark *watermark.Watermark
 	prevOOMKill  uint64
 	memLimit     float64
+
+	// Resource requests for proactive utilization checks.
+	cpuRequest float64 // cores
+	memRequest float64 // bytes
+
+	// Proactive scale-up thresholds (0 = disabled).
+	cpuProactivePct float64
+	memProactivePct float64
+
+	// PSI scale-up thresholds (0 = disabled).
+	cpuPSIThreshold float64
+	memPSIThreshold float64
+
+	// Previous cpu.stat usage_usec for rate computation.
+	prevCPUUsageUsec float64
+	prevSampleTime   time.Time
 }
 
 // Agent is the main DaemonSet runtime.
@@ -134,8 +141,9 @@ func (a *Agent) Run(ctx context.Context) error {
 }
 
 // EnsurePod registers a pod for sampling, restoring its histogram from the
-// PRR checkpoint if present.
-func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1alpha1.PodResourceRecommendation) error {
+// PRR checkpoint if present. The scaling thresholds from the parent PPVPA are
+// stored for proactive scale-up evaluation.
+func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1alpha1.PodResourceRecommendation, thresholds autoscalingv1alpha1.ScalingThresholds) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	uid := string(p.UID)
@@ -156,20 +164,43 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 		return err
 	}
 
-	isWindows := p.Spec.OS != nil && p.Spec.OS.Name == corev1.Windows
-	containers := extractContainerMeta(&p)
+	// Extract resource requests from the first container (pod-level model).
+	var cpuReq, memReq float64
+	for i := range p.Spec.Containers {
+		if req, ok := p.Spec.Containers[i].Resources.Requests[corev1.ResourceCPU]; ok {
+			cpuReq += req.AsApproximateFloat64()
+		}
+		if req, ok := p.Spec.Containers[i].Resources.Requests[corev1.ResourceMemory]; ok {
+			memReq += float64(req.Value())
+		}
+	}
+
+	// Parse PSI thresholds; default to 0 (disabled) on parse failure.
+	cpuPSIThreshold := parseFloatDefault(thresholds.CPU.ScaleUpPSI, 0)
+	memPSIThreshold := parseFloatDefault(thresholds.Memory.ScaleUpPSI, 0)
+
+	// Proactive thresholds: use configured value, or 0 if unset.
+	cpuProactivePct := float64(thresholds.CPU.ProactivePct)
+	memProactivePct := float64(thresholds.Memory.ProactivePct)
 
 	st := &podState{
 		uid: uid, namespace: p.Namespace, name: p.Name, prrName: prr.Name,
 		qos: p.Status.QOSClass, cgroupPath: slice,
-		isWindows:  isWindows,
-		containers: containers,
-		cpu:        cs, mem: mp,
-		cpuWatermark: watermark.New(time.Hour),
-		memWatermark: watermark.New(24 * time.Hour),
+		cpu: cs, mem: mp,
+		cpuWatermark:    watermark.New(time.Hour),
+		memWatermark:    watermark.New(24 * time.Hour),
+		cpuRequest:      cpuReq,
+		memRequest:      memReq,
+		cpuProactivePct: cpuProactivePct,
+		memProactivePct: memProactivePct,
+		cpuPSIThreshold: cpuPSIThreshold,
+		memPSIThreshold: memPSIThreshold,
 	}
 	if prr.Status.HistogramCheckpoint != "" {
 		if h, err := histogram.Decode(prr.Status.HistogramCheckpoint); err == nil {
+			// Best-effort restore into CPU stream's histogram. Memory peak
+			// extractor's histogram is separate; matching CRD-side storage is
+			// out of scope for this MVP.
 			_ = cs.Snapshot().Merge(h)
 		}
 	}
@@ -184,23 +215,66 @@ func (a *Agent) ForgetPod(uid string) {
 	delete(a.pods, uid)
 }
 
-// sampleAll polls PSI and memory.events for every registered pod.
+// sampleAll polls PSI and memory.events for every registered pod, evaluates
+// scale-up triggers (reactive PSI and proactive utilization), and records
+// usage into histograms and watermarks.
 func (a *Agent) sampleAll(_ context.Context, t time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	for _, st := range a.pods {
-		if cpuPSI, err := psi.ReadFile(cgroup.PSIFile(st.cgroupPath, "cpu")); err == nil {
-			_ = cpuPSI
-		}
-		if memPSI, err := psi.ReadFile(cgroup.PSIFile(st.cgroupPath, "memory")); err == nil {
-			_ = memPSI
-		}
-		// Read memory.current.
+		// --- Read current utilization metrics ---
+
+		// Memory usage (bytes) from memory.current.
+		var memUsedBytes float64
 		if b, err := os.ReadFile(st.cgroupPath + "/memory.current"); err == nil {
 			var used uint64
 			_, _ = fmt.Sscanf(string(b), "%d", &used)
+			memUsedBytes = float64(used)
 			st.mem.Record(used, t)
 		}
+
+		// CPU utilization (cores) from cpu.stat usage_usec delta.
+		var cpuCores float64
+		curUsage := readCPUUsageUsec(st.cgroupPath)
+		if curUsage > 0 {
+			if !st.prevSampleTime.IsZero() {
+				elapsed := t.Sub(st.prevSampleTime).Seconds()
+				if elapsed > 0 {
+					cpuCores = (curUsage - st.prevCPUUsageUsec) / elapsed
+				}
+			}
+			st.prevCPUUsageUsec = curUsage
+			st.prevSampleTime = t
+		}
+
+		// --- CPU scale-up evaluation (PSI reactive + proactive utilization) ---
+		if cpuPSI, err := psi.ReadFile(cgroup.PSIFile(st.cgroupPath, "cpu")); err == nil {
+			dec := trigger.EvaluateScaleUp(
+				cpuPSI.Some,
+				st.cpuPSIThreshold,
+				cpuCores,
+				st.cpuRequest,
+				st.cpuProactivePct,
+			)
+			if dec.Fire {
+				st.cpuWatermark.Record(cpuCores, t)
+			}
+		}
+
+		// --- Memory scale-up evaluation (PSI reactive + proactive utilization) ---
+		if memPSI, err := psi.ReadFile(cgroup.PSIFile(st.cgroupPath, "memory")); err == nil {
+			dec := trigger.EvaluateScaleUp(
+				memPSI.Some,
+				st.memPSIThreshold,
+				memUsedBytes,
+				st.memRequest,
+				st.memProactivePct,
+			)
+			if dec.Fire {
+				st.memWatermark.Record(memUsedBytes, t)
+			}
+		}
+
 		// Watch for OOMs.
 		if ev, err := oom.Parse(cgroup.MemoryEventsFile(st.cgroupPath)); err == nil {
 			if ev.OOMKill > st.prevOOMKill && st.memLimit > 0 {
@@ -243,48 +317,8 @@ func (a *Agent) writeCheckpoints(ctx context.Context) {
 	}
 }
 
-// Enqueue validates and queues a resize patch for the named container.
-// Returns an error if the resize violates Kubernetes 1.36 in-place resize
-// limitations; in that case the patch is not queued.
-func (a *Agent) Enqueue(p patcher.PendingPatch) error {
-	a.mu.Lock()
-	var st *podState
-	for _, s := range a.pods {
-		if s.name == p.Pod && s.namespace == p.Namespace {
-			st = s
-			break
-		}
-	}
-	a.mu.Unlock()
-
-	if st == nil {
-		return fmt.Errorf("pod %s/%s not found in agent state", p.Namespace, p.Pod)
-	}
-
-	cm, ok := st.containers[p.Container]
-	if !ok {
-		return fmt.Errorf("container %q not found in pod %s/%s", p.Container, p.Namespace, p.Pod)
-	}
-
-	violations := validate.ValidateResize(validate.ResizeContext{
-		NodeCaps:       a.Caps,
-		QoS:            st.qos,
-		IsWindows:      st.isWindows,
-		ContainerType:  cm.containerType,
-		ContainerName:  p.Container,
-		CurrentCPU:     cm.currentCPU,
-		CurrentMemory:  cm.currentMemory,
-		ProposedCPU:    p.NewCPU,
-		ProposedMemory: p.NewMemory,
-		ResizePolicies: cm.resizePolicies,
-	})
-	if len(violations) > 0 {
-		return fmt.Errorf("resize validation failed for %s/%s:%s: %v", p.Namespace, p.Pod, p.Container, violations)
-	}
-
-	a.queue.Push(p)
-	return nil
-}
+// Enqueue queues a resize patch for the named container.
+func (a *Agent) Enqueue(p patcher.PendingPatch) { a.queue.Push(p) }
 
 // PodForUID returns the namespaced name registered for a pod UID.
 func (a *Agent) PodForUID(uid string) (types.NamespacedName, bool) {
@@ -297,66 +331,37 @@ func (a *Agent) PodForUID(uid string) (types.NamespacedName, bool) {
 	return types.NamespacedName{Namespace: st.namespace, Name: st.name}, true
 }
 
-// extractContainerMeta builds per-container metadata from a Pod object,
-// classifying each container and recording its allocated resources and
-// resize policies.
-func extractContainerMeta(pod *corev1.Pod) map[string]containerMeta {
-	m := make(map[string]containerMeta)
+// parseFloatDefault parses a string as float64, returning def on failure.
+func parseFloatDefault(s string, def float64) float64 {
+	if s == "" {
+		return def
+	}
+	v, err := strconv.ParseFloat(s, 64)
+	if err != nil {
+		return def
+	}
+	return v
+}
 
-	// Build a lookup of allocated resources from container statuses.
-	allocated := make(map[string]corev1.ResourceList)
-	for i := range pod.Status.ContainerStatuses {
-		cs := &pod.Status.ContainerStatuses[i]
-		if cs.AllocatedResources != nil {
-			allocated[cs.Name] = cs.AllocatedResources
+// readCPUUsageUsec reads the cpu.stat usage_usec from a cgroup path and
+// converts it to cores by dividing by 1e6 (microseconds to seconds). This is a
+// cumulative counter, so it should be differenced between samples; however for
+// proactive triggering we use the instantaneous rate approximation from PSI
+// instead. This helper provides a raw usage snapshot.
+func readCPUUsageUsec(cgroupPath string) float64 {
+	b, err := os.ReadFile(cgroupPath + "/cpu.stat")
+	if err != nil {
+		return 0
+	}
+	for _, line := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(line, "usage_usec ") {
+			fields := strings.Fields(line)
+			if len(fields) >= 2 {
+				if usec, err := strconv.ParseFloat(fields[1], 64); err == nil {
+					return usec / 1e6
+				}
+			}
 		}
 	}
-	for i := range pod.Status.InitContainerStatuses {
-		cs := &pod.Status.InitContainerStatuses[i]
-		if cs.AllocatedResources != nil {
-			allocated[cs.Name] = cs.AllocatedResources
-		}
-	}
-
-	// Regular containers.
-	for i := range pod.Spec.Containers {
-		c := &pod.Spec.Containers[i]
-		cm := containerMeta{containerType: validate.Regular}
-		if ar, ok := allocated[c.Name]; ok {
-			cm.currentCPU = ar[corev1.ResourceCPU]
-			cm.currentMemory = ar[corev1.ResourceMemory]
-		}
-		cm.resizePolicies = c.ResizePolicy
-		m[c.Name] = cm
-	}
-
-	// Init containers — classify as SidecarInit or NonRestartableInit.
-	for i := range pod.Spec.InitContainers {
-		c := &pod.Spec.InitContainers[i]
-		cm := containerMeta{}
-		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
-			cm.containerType = validate.SidecarInit
-		} else {
-			cm.containerType = validate.NonRestartableInit
-		}
-		if ar, ok := allocated[c.Name]; ok {
-			cm.currentCPU = ar[corev1.ResourceCPU]
-			cm.currentMemory = ar[corev1.ResourceMemory]
-		}
-		cm.resizePolicies = c.ResizePolicy
-		m[c.Name] = cm
-	}
-
-	// Ephemeral containers.
-	for i := range pod.Spec.EphemeralContainers {
-		c := &pod.Spec.EphemeralContainers[i]
-		cm := containerMeta{containerType: validate.Ephemeral}
-		if ar, ok := allocated[c.Name]; ok {
-			cm.currentCPU = ar[corev1.ResourceCPU]
-			cm.currentMemory = ar[corev1.ResourceMemory]
-		}
-		m[c.Name] = cm
-	}
-
-	return m
+	return 0
 }

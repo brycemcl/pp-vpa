@@ -93,14 +93,24 @@ spec:
   targetPodName: web-app-7b5x  
 status:  
   contentionHighWatermarks:  
-    podLevel: { memory: 3.5Gi, lastUpdated: "2026-05-18T12:00:00Z" }  
+    podLevel: { memory: 3.5Gi, cpu: "1.5", lastUpdated: "2026-05-18T12:00:00Z" }  
+    containerLevel:  
+      \- containerName: web-app  
+        memory: 3.2Gi  
+        cpu: "1.4"  
+        lastUpdated: "2026-05-18T12:00:00Z"  
   observedPeak:  
     podLevel: { memory: 4Gi }  
+    containers:  
+      \- containerName: web-app  
+        memory: 3.8Gi  
   podLevelTarget: { memory: 4.6Gi }  
   containerRecommendations:  
     \- containerName: web-app  
+      lowerBound: { cpu: 1.5 }  
       target: { cpu: 2 }   
       uncappedTarget: { cpu: 2 }  
+      upperBound: { cpu: 2.5 }  
   histogramCheckpoint: "eA1B2C3D..." 
 
 ### **C. PerPodVerticalPodAutoscalerCheckpoint (The Workload Checkpoint)**
@@ -115,6 +125,8 @@ metadata:
     \- apiVersion: autoscaling.brycemclachlan.me/v1alpha1  
       kind: PerPodVerticalPodAutoscaler  
       name: web-app-ppvpa  
+spec:  
+  ppvpaRef: web-app-ppvpa  
 status:  
   aggregateHistogramCheckpoint: "fE4D5C6B..."
 
@@ -144,7 +156,7 @@ status:
 * **Aggregation:** Merges PRR telemetry into a single, workload-wide decaying histogram.  
 * **Establishing the "Safe Zone":** Applies configured percentiles for target/bounds.  
 * **History-Based Confidence Multipliers:** Scaled by ![][image2].  
-* **The Margin Estimator:** Applies safetyMarginPercentage as a static pad on all bounds.  
+* **The Margin Estimator:** Applies safetyMarginPercentage as a static pad on LowerBound, Target, and UpperBound. UncappedTarget is deliberately excluded to preserve the pure percentile calculation.  
 * **UncappedTarget:** Exposes the pure calculation, allowing SREs to spot truncated limits.  
 * **Anomaly Detection:** If pod usage exceeds aggregate upperBound for longer than anomalyEvictionTimeoutSeconds, it flags the PRR for eviction.
 
@@ -159,7 +171,7 @@ status:
 
 #### **D. The Admission Controller (Mutating Webhook)**
 
-* **Smart Injection:** If temporaryReplicas \> 0 OR any sibling PRRs are Infeasible or Anomalous, injects the upperBound to give replacement pods headroom. Otherwise, injects the target \+ MarginEstimator padding.
+* **Smart Injection:** If temporaryReplicas \> 0 OR any sibling PRRs are Infeasible or Anomalous, injects the upperBound to give replacement pods headroom. Otherwise, injects the target (which already includes the MarginEstimator padding from the recommender pipeline).
 
 ## **4\. Ecosystem Integration**
 
