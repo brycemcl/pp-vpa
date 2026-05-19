@@ -133,12 +133,13 @@ type CPUScalingThresholds struct {
 	// +optional
 	// +kubebuilder:default=20
 	ScaleDownBufferDropPercentage int32 `json:"scaleDownBufferDropPercentage,omitempty"`
-	// ProactivePct is the utilization-vs-request percentage that triggers a
-	// proactive scale-up. For example, 80 means scale up when CPU usage
-	// reaches 80% of the pod's CPU request. Set to 0 to disable.
+	// RequestUtilizationThresholdPercentage is the utilization-vs-request
+	// percentage that triggers a proactive scale-up. For example, 80 means
+	// scale up when CPU usage reaches 80% of the pod's CPU request.
+	// Set to 0 to disable.
 	// +optional
 	// +kubebuilder:default=80
-	ProactivePct int32 `json:"proactivePct,omitempty"`
+	RequestUtilizationThresholdPercentage int32 `json:"requestUtilizationThresholdPercentage,omitempty"`
 }
 
 // MemoryScalingThresholds controls memory triggers.
@@ -151,12 +152,13 @@ type MemoryScalingThresholds struct {
 	// +optional
 	// +kubebuilder:default=24
 	WatermarkDecayWindowHours int32 `json:"watermarkDecayWindowHours,omitempty"`
-	// ProactivePct is the utilization-vs-request percentage that triggers a
-	// proactive scale-up. For example, 80 means scale up when memory usage
-	// reaches 80% of the pod's memory request. Set to 0 to disable.
+	// RequestUtilizationThresholdPercentage is the utilization-vs-request
+	// percentage that triggers a proactive scale-up. For example, 80 means
+	// scale up when memory usage reaches 80% of the pod's memory request.
+	// Set to 0 to disable.
 	// +optional
 	// +kubebuilder:default=80
-	ProactivePct int32 `json:"proactivePct,omitempty"`
+	RequestUtilizationThresholdPercentage int32 `json:"requestUtilizationThresholdPercentage,omitempty"`
 }
 
 // ScalingThresholds bundles CPU and memory triggers.

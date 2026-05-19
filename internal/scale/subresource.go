@@ -12,7 +12,7 @@ You may obtain a copy of the License at
 //
 // The /scale subresource is exposed declaratively by the CRD marker
 //
-//	// +kubebuilder:subresource:scale:specpath=.status.targetReplicas,statuspath=.status.activeReplicas
+//	// +kubebuilder:subresource:scale:specpath=.spec.targetReplicas,statuspath=.status.activeReplicas
 //
 // on PerPodVerticalPodAutoscaler. The Kubernetes API server then serves a
 // virtual Scale subresource at

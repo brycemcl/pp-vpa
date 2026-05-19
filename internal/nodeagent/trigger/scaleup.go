@@ -21,12 +21,13 @@ type ScaleUpDecision struct {
 }
 
 // EvaluateScaleUp fires when PSI.avg10 exceeds the configured threshold OR
-// when utilization exceeds the proactive threshold (requests * proactivePct).
-func EvaluateScaleUp(p psi.Line, psiThreshold float64, utilization, requests, proactivePct float64) ScaleUpDecision {
+// when utilization exceeds the request utilization threshold
+// (requests * requestUtilThresholdPct / 100).
+func EvaluateScaleUp(p psi.Line, psiThreshold float64, utilization, requests, requestUtilThresholdPct float64) ScaleUpDecision {
 	if p.Avg10 >= psiThreshold && psiThreshold > 0 {
 		return ScaleUpDecision{Fire: true, Reason: "psi"}
 	}
-	if requests > 0 && utilization >= requests*proactivePct/100.0 && proactivePct > 0 {
+	if requests > 0 && utilization >= requests*requestUtilThresholdPct/100.0 && requestUtilThresholdPct > 0 {
 		return ScaleUpDecision{Fire: true, Reason: "utilization"}
 	}
 	return ScaleUpDecision{}

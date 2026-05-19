@@ -67,9 +67,9 @@ type podState struct {
 	cpuRequest float64 // cores
 	memRequest float64 // bytes
 
-	// Proactive scale-up thresholds (0 = disabled).
-	cpuProactivePct float64
-	memProactivePct float64
+	// Request utilization thresholds for proactive scale-up (0 = disabled).
+	cpuRequestUtilThresholdPct float64
+	memRequestUtilThresholdPct float64
 
 	// PSI scale-up thresholds (0 = disabled).
 	cpuPSIThreshold float64
@@ -179,9 +179,8 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 	cpuPSIThreshold := parseFloatDefault(thresholds.CPU.ScaleUpPSI, 0)
 	memPSIThreshold := parseFloatDefault(thresholds.Memory.ScaleUpPSI, 0)
 
-	// Proactive thresholds: use configured value, or 0 if unset.
-	cpuProactivePct := float64(thresholds.CPU.ProactivePct)
-	memProactivePct := float64(thresholds.Memory.ProactivePct)
+	cpuRequestUtilThresholdPct := float64(thresholds.CPU.RequestUtilizationThresholdPercentage)
+	memRequestUtilThresholdPct := float64(thresholds.Memory.RequestUtilizationThresholdPercentage)
 
 	st := &podState{
 		uid: uid, namespace: p.Namespace, name: p.Name, prrName: prr.Name,
@@ -191,8 +190,8 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 		memWatermark:    watermark.New(24 * time.Hour),
 		cpuRequest:      cpuReq,
 		memRequest:      memReq,
-		cpuProactivePct: cpuProactivePct,
-		memProactivePct: memProactivePct,
+		cpuRequestUtilThresholdPct: cpuRequestUtilThresholdPct,
+		memRequestUtilThresholdPct: memRequestUtilThresholdPct,
 		cpuPSIThreshold: cpuPSIThreshold,
 		memPSIThreshold: memPSIThreshold,
 	}
@@ -254,7 +253,7 @@ func (a *Agent) sampleAll(_ context.Context, t time.Time) {
 				st.cpuPSIThreshold,
 				cpuCores,
 				st.cpuRequest,
-				st.cpuProactivePct,
+				st.cpuRequestUtilThresholdPct,
 			)
 			if dec.Fire {
 				st.cpuWatermark.Record(cpuCores, t)
@@ -268,7 +267,7 @@ func (a *Agent) sampleAll(_ context.Context, t time.Time) {
 				st.memPSIThreshold,
 				memUsedBytes,
 				st.memRequest,
-				st.memProactivePct,
+				st.memRequestUtilThresholdPct,
 			)
 			if dec.Fire {
 				st.memWatermark.Record(memUsedBytes, t)

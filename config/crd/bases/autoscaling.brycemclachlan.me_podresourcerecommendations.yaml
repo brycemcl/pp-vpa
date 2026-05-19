@@ -55,6 +55,12 @@ spec:
             description: PodResourceRecommendationStatus is the recommender output
               and checkpoint.
             properties:
+              anomalyExceedSince:
+                description: |-
+                  AnomalyExceedSince records when the pod's usage first exceeded the
+                  aggregate upperBound. Cleared when usage drops back within bounds.
+                format: date-time
+                type: string
               conditions:
                 items:
                   description: Condition contains details for one aspect of the current

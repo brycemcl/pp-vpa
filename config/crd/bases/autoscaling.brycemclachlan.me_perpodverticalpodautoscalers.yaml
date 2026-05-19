@@ -134,6 +134,15 @@ spec:
                   cpu:
                     description: CPUScalingThresholds controls CPU triggers.
                     properties:
+                      requestUtilizationThresholdPercentage:
+                        default: 80
+                        description: |-
+                          RequestUtilizationThresholdPercentage is the utilization-vs-request
+                          percentage that triggers a proactive scale-up. For example, 80 means
+                          scale up when CPU usage reaches 80% of the pod's CPU request.
+                          Set to 0 to disable.
+                        format: int32
+                        type: integer
                       scaleDownBufferDropPercentage:
                         default: 20
                         description: |-
@@ -150,6 +159,15 @@ spec:
                   memory:
                     description: MemoryScalingThresholds controls memory triggers.
                     properties:
+                      requestUtilizationThresholdPercentage:
+                        default: 80
+                        description: |-
+                          RequestUtilizationThresholdPercentage is the utilization-vs-request
+                          percentage that triggers a proactive scale-up. For example, 80 means
+                          scale up when memory usage reaches 80% of the pod's memory request.
+                          Set to 0 to disable.
+                        format: int32
+                        type: integer
                       scaleUpPSI:
                         default: "5.0"
                         type: string
