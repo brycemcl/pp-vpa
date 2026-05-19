@@ -39,6 +39,14 @@ subjects:
   - kind: ServiceAccount
     name: pp-vpa-manager
     namespace: {{ .Values.namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pp-vpa-metrics-reader
+rules:
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
 {{- if .Values.nodeAgent.enabled }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
