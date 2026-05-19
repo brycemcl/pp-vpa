@@ -61,3 +61,5 @@ jobs:
           kubectl -n pp-vpa-system describe deploy pp-vpa-manager || true
           kubectl -n pp-vpa-system logs deploy/pp-vpa-manager --tail=200 || true
           kubectl -n pp-vpa-system logs ds/pp-vpa-node-agent --tail=200 || true
+          kubectl -n pp-vpa-system logs curl-metrics --tail=50 || true
+          kubectl -n pp-vpa-system describe pod curl-metrics || true

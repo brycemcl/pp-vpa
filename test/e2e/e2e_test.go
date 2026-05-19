@@ -207,10 +207,9 @@ var _ = Describe("Manager", Ordered, func() {
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
 							"args": [
-								"for i in $(seq 1 30); do curl -s http://%s.%s.svc.cluster.local/metrics && exit 0 || sleep 2; done; exit 1"
+								"for i in $(seq 1 30); do echo \"attempt $i\"; curl -sv http://%s.%s.svc.cluster.local/metrics 2>&1 && exit 0 || sleep 2; done; exit 1"
 							],
 							"securityContext": {
-								"readOnlyRootFilesystem": true,
 								"allowPrivilegeEscalation": false,
 								"capabilities": {
 									"drop": ["ALL"]
@@ -220,8 +219,10 @@ var _ = Describe("Manager", Ordered, func() {
 								"seccompProfile": {
 									"type": "RuntimeDefault"
 								}
-							}
-						}]
+							},
+							"volumeMounts": [{"name": "tmp", "mountPath": "/tmp"}]
+						}],
+						"volumes": [{"name": "tmp", "emptyDir": {}}]
 					}
 				}`, metricsServiceName, namespace))
 			_, err := utils.Run(cmd)
