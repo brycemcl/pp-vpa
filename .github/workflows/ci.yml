@@ -27,10 +27,11 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: golangci-lint
-        uses: golangci/golangci-lint-action@v6
-        with:
-          version: v1.62.0
+      # Use the project's pinned linter (Makefile installs the version that
+      # matches go.mod's Go toolchain) instead of golangci-lint-action so
+      # local `make lint` and CI lint stay in lock-step.
+      - name: make lint
+        run: make lint
 
   unit:
     name: vet + unit + envtest
