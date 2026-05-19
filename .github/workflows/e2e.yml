@@ -49,6 +49,9 @@ jobs:
             --namespace pp-vpa-system --create-namespace --wait
 
       - name: run e2e
+        env:
+          KIND_CLUSTER: pp-vpa-e2e
+          CERT_MANAGER_INSTALL_SKIP: "true"
         run: go test -tags=e2e -count=1 -timeout 20m ./test/e2e/...
 
       - name: dump diagnostics on failure
