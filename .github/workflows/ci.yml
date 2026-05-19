@@ -1,18 +1,13 @@
 name: ci
-# Fast checks. Required gate for merges. Runs on:
-#   - PRs targeting main (any source branch, including forks)
-#   - direct pushes to main (post-merge verification)
+# Fast checks. Required gate for merges. PR-only — nothing runs on main
+# itself other than release.yml.
 on:
   pull_request:
     branches: ["main"]
-  push:
-    branches: ["main"]
 
-# Cancel superseded runs on the same branch/PR so feature-branch noise
-# doesn't pile up. Main runs are preserved (each commit gets its own group).
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
