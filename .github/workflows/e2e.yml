@@ -1,0 +1,35 @@
+name: e2e
+on:
+  pull_request:
+    types: [labeled]
+  schedule:
+    - cron: "0 4 * * *"  # nightly
+jobs:
+  kind:
+    if: github.event.label.name == 'e2e' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: helm/kind-action@v1
+        with:
+          config: hack/e2e/kind-config.yaml
+      - name: build image and load into kind
+        run: |
+          docker build -t pp-vpa:dev .
+          kind load docker-image pp-vpa:dev --name chart-testing
+      - name: install cert-manager
+        run: |
+          helm repo add jetstack https://charts.jetstack.io
+          helm install cert-manager jetstack/cert-manager \
+            --namespace cert-manager --create-namespace \
+            --set crds.enabled=true
+      - name: install pp-vpa
+        run: |
+          helm install pp-vpa charts/pp-vpa \
+            --set image.repository=pp-vpa --set image.tag=dev \
+            --create-namespace --namespace pp-vpa-system
+      - name: run e2e
+        run: go test -tags=e2e -count=1 ./test/e2e/...

@@ -1,0 +1,14 @@
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: pp-vpa-control-plane
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 30
+    limitResponse:
+      type: Queue
+      queuing:
+        queueLengthLimit: 100
+        queues: 32
+        handSize: 6

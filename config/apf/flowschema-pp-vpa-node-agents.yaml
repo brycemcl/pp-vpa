@@ -1,0 +1,35 @@
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: pp-vpa-node-agents
+spec:
+  matchingPrecedence: 850
+  priorityLevelConfiguration:
+    name: pp-vpa-node-agents
+  # distinguisherMethod.type=ByUser is load-bearing: inside the shared
+  # pp-vpa-node-agents priority level, APF fair-queues by user identity.
+  # Each node-agent pod has its own bound ServiceAccount token, so a chatty
+  # node-agent shuffle-shards into its own queue and cannot starve others.
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            namespace: pp-vpa-system
+            name: pp-vpa-node-agent
+      resourceRules:
+        - verbs: ["patch", "update"]
+          apiGroups: [""]
+          resources: ["pods/resize"]
+        - verbs: ["patch", "update"]
+          apiGroups: ["autoscaling.brycemclachlan.me"]
+          resources: ["podresourcerecommendations/status"]
+        - verbs: ["get", "list", "watch"]
+          apiGroups: [""]
+          resources: ["pods"]
+        - verbs: ["get", "list", "watch"]
+          apiGroups: ["autoscaling.brycemclachlan.me"]
+          resources:
+            - podresourcerecommendations
+            - perpodverticalpodautoscalers

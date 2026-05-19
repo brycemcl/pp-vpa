@@ -1,0 +1,440 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.20.1
+  name: perpodverticalpodautoscalers.autoscaling.brycemclachlan.me
+spec:
+  group: autoscaling.brycemclachlan.me
+  names:
+    categories:
+    - autoscaling
+    kind: PerPodVerticalPodAutoscaler
+    listKind: PerPodVerticalPodAutoscalerList
+    plural: perpodverticalpodautoscalers
+    shortNames:
+    - ppvpa
+    singular: perpodverticalpodautoscaler
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: PerPodVerticalPodAutoscaler is the Schema for the perpodverticalpodautoscalers
+          API.
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: PerPodVerticalPodAutoscalerSpec defines the desired state.
+            properties:
+              recommenderPolicy:
+                description: RecommenderPolicy tunes the histogram-based estimator.
+                properties:
+                  lowerBoundPercentile:
+                    default: "50.0"
+                    type: string
+                  safetyMarginPercentage:
+                    default: 15
+                    description: |-
+                      SafetyMarginPercentage is added as a static pad and enforces the
+                      minimum memory peak floor.
+                    format: int32
+                    type: integer
+                  targetPercentile:
+                    default: "90.0"
+                    type: string
+                  upperBoundPercentile:
+                    default: "95.0"
+                    type: string
+                type: object
+              resourcePolicy:
+                description: ResourcePolicy bounds the recommendations.
+                properties:
+                  containerPolicies:
+                    items:
+                      description: ContainerPolicy constrains a single container's
+                        recommendations.
+                      properties:
+                        containerName:
+                          description: ContainerName matches the container; "*" matches
+                            all containers.
+                          type: string
+                        maxAllowed:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: ResourceList is a set of (resource name, quantity)
+                            pairs.
+                          type: object
+                        minAllowed:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: ResourceList is a set of (resource name, quantity)
+                            pairs.
+                          type: object
+                      required:
+                      - containerName
+                      type: object
+                    type: array
+                  podLevelPolicies:
+                    items:
+                      description: PodLevelPolicy constrains pod-level resource recommendations.
+                      properties:
+                        maxAllowed:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        minAllowed:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        resourceName:
+                          description: ResourceName is the name identifying various
+                            resources in a ResourceList.
+                          enum:
+                          - cpu
+                          - memory
+                          type: string
+                      required:
+                      - resourceName
+                      type: object
+                    type: array
+                type: object
+              scalingThresholds:
+                description: ScalingThresholds bundles CPU and memory triggers.
+                properties:
+                  cpu:
+                    description: CPUScalingThresholds controls CPU triggers.
+                    properties:
+                      scaleDownBufferDropPercentage:
+                        default: 20
+                        description: |-
+                          ScaleDownBufferDropPercentage is the relative drop from the
+                          high-watermark required to trigger CPU scale-down.
+                        format: int32
+                        type: integer
+                      scaleUpPSI:
+                        default: "10.0"
+                        description: ScaleUpPSI is the PSI avg10 above which CPU scale-up
+                          fires.
+                        type: string
+                    type: object
+                  memory:
+                    description: MemoryScalingThresholds controls memory triggers.
+                    properties:
+                      scaleUpPSI:
+                        default: "5.0"
+                        type: string
+                      watermarkDecayWindowHours:
+                        default: 24
+                        description: |-
+                          WatermarkDecayWindowHours slowly lowers the high-watermark if not
+                          hit within the window.
+                        format: int32
+                        type: integer
+                    type: object
+                type: object
+              targetRef:
+                description: TargetRef points at the workload controller (usually
+                  a Deployment).
+                properties:
+                  apiVersion:
+                    description: apiVersion is the API version of the referent
+                    type: string
+                  kind:
+                    description: 'kind is the kind of the referent; More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds'
+                    type: string
+                  name:
+                    description: 'name is the name of the referent; More info: https://kubernetes.io/docs/concepts/overview/working-with-objects/names/#names'
+                    type: string
+                required:
+                - kind
+                - name
+                type: object
+                x-kubernetes-map-type: atomic
+              targetReplicas:
+                description: |-
+                  TargetReplicas is the HPA-driven steady-state replica count. The
+                  /scale subresource maps Scale.spec.replicas here; the controller
+                  reconciles Deployment.spec.replicas to TargetReplicas + Status.TemporaryReplicas
+                  so HPA reads remain stable across surge cycles.
+                format: int32
+                type: integer
+              updatePolicy:
+                description: UpdatePolicy defines how the controller responds to recommendation
+                  changes.
+                properties:
+                  anomalyEvictionTimeoutSeconds:
+                    default: 900
+                    description: |-
+                      AnomalyEvictionTimeoutSeconds is the window over which a pod must
+                      exceed the aggregate upperBound before it is considered anomalous.
+                    format: int32
+                    type: integer
+                  burstTimeoutSeconds:
+                    default: 600
+                    description: BurstTimeoutSeconds aborts an eviction when a surge
+                      pod is stuck Pending.
+                    format: int32
+                    type: integer
+                  infeasibleUpdateBehavior:
+                    description: InfeasibleUpdateBehavior controls the budgeted scale-up-then-evict
+                      fallback.
+                    properties:
+                      maxSurge:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 25%
+                        description: MaxSurge bounds extra temporary pods used to
+                          inherit state safely.
+                        x-kubernetes-int-or-string: true
+                      maxUnavailable:
+                        anyOf:
+                        - type: integer
+                        - type: string
+                        default: 0
+                        description: MaxUnavailable bounds the PDB-honoring eviction
+                          path.
+                        x-kubernetes-int-or-string: true
+                    type: object
+                  significantChangeThresholdPercentage:
+                    default: 10
+                    description: |-
+                      SignificantChangeThresholdPercentage gates churn: only update a PRR
+                      when the recommendation changes by more than this percentage.
+                    format: int32
+                    type: integer
+                  updateMode:
+                    default: InPlace
+                    description: UpdateMode defines how the PP-VPA actuates recommendations.
+                    enum:
+                    - "Off"
+                    - Initial
+                    - InPlace
+                    - Recreate
+                    type: string
+                type: object
+            required:
+            - targetRef
+            type: object
+          status:
+            description: PerPodVerticalPodAutoscalerStatus is observed state.
+            properties:
+              activeReplicas:
+                description: ActiveReplicas reflects the steady-state desired pod
+                  count.
+                format: int32
+                type: integer
+              conditions:
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+                x-kubernetes-list-map-keys:
+                - type
+                x-kubernetes-list-type: map
+              defaultRecommendation:
+                description: Recommendation is the aggregated workload recommendation.
+                properties:
+                  containerRecommendations:
+                    items:
+                      description: ContainerRecommendation is the per-container output
+                        of the recommender.
+                      properties:
+                        containerName:
+                          type: string
+                        lowerBound:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: ResourceList is a set of (resource name, quantity)
+                            pairs.
+                          type: object
+                        target:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: ResourceList is a set of (resource name, quantity)
+                            pairs.
+                          type: object
+                        uncappedTarget:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: UncappedTarget exposes the pure calculation
+                            pre-clamping.
+                          type: object
+                        upperBound:
+                          additionalProperties:
+                            anyOf:
+                            - type: integer
+                            - type: string
+                            pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                            x-kubernetes-int-or-string: true
+                          description: ResourceList is a set of (resource name, quantity)
+                            pairs.
+                          type: object
+                      required:
+                      - containerName
+                      type: object
+                    type: array
+                  podLevel:
+                    description: PodLevelRecommendation is the per-pod-level output
+                      of the recommender.
+                    properties:
+                      lowerBound:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                      target:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                      uncappedTarget:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                      upperBound:
+                        additionalProperties:
+                          anyOf:
+                          - type: integer
+                          - type: string
+                          pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                          x-kubernetes-int-or-string: true
+                        description: ResourceList is a set of (resource name, quantity)
+                          pairs.
+                        type: object
+                    type: object
+                  podLevelTarget:
+                    additionalProperties:
+                      anyOf:
+                      - type: integer
+                      - type: string
+                      pattern: ^(\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))(([KMGTPE]i)|[numkMGTPE]|([eE](\+|-)?(([0-9]+(\.[0-9]*)?)|(\.[0-9]+))))?$
+                      x-kubernetes-int-or-string: true
+                    description: ResourceList is a set of (resource name, quantity)
+                      pairs.
+                    type: object
+                type: object
+              temporaryReplicas:
+                description: TemporaryReplicas reflects in-flight maxSurge inflation.
+                format: int32
+                type: integer
+            type: object
+        required:
+        - spec
+        type: object
+    served: true
+    storage: true
+    subresources:
+      scale:
+        specReplicasPath: .spec.targetReplicas
+        statusReplicasPath: .status.activeReplicas
+      status: {}

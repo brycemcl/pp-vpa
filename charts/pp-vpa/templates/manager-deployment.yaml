@@ -1,0 +1,69 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pp-vpa-manager
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: pp-vpa
+    app.kubernetes.io/component: manager
+spec:
+  replicas: {{ .Values.manager.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pp-vpa
+      app.kubernetes.io/component: manager
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pp-vpa
+        app.kubernetes.io/component: manager
+    spec:
+      serviceAccountName: pp-vpa-manager
+      containers:
+        - name: pp-vpa
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --mode=manager
+            - --leader-elect={{ .Values.manager.leaderElection }}
+            - --health-probe-bind-address=:8081
+            - --metrics-bind-address=:8080
+{{- if .Values.webhook.enabled }}
+            - --webhook-cert-path=/tmp/k8s-webhook-server/serving-certs
+            - --enable-webhooks=true
+{{- else }}
+            - --enable-webhooks=false
+{{- end }}
+          ports:
+            - name: webhook
+              containerPort: 9443
+              protocol: TCP
+            - name: metrics
+              containerPort: 8080
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8081
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8081
+          resources:
+{{ toYaml .Values.manager.resources | indent 12 }}
+          securityContext:
+            runAsNonRoot: true
+            readOnlyRootFilesystem: true
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+{{- if .Values.webhook.enabled }}
+          volumeMounts:
+            - name: webhook-certs
+              mountPath: /tmp/k8s-webhook-server/serving-certs
+              readOnly: true
+      volumes:
+        - name: webhook-certs
+          secret:
+            secretName: pp-vpa-webhook-cert
+{{- end }}

@@ -1,0 +1,13 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+# v1.36 image so KEP-1287 in-place resize is GA and pod-level resources are supported.
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.36.0
+  - role: worker
+    image: kindest/node:v1.36.0
+  - role: worker
+    image: kindest/node:v1.36.0
+featureGates:
+  InPlacePodVerticalScaling: true
+  PodLevelResources: true

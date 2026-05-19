@@ -1,0 +1,9 @@
+apiVersion: autoscaling.brycemclachlan.me/v1alpha1
+kind: PodResourceRecommendation
+metadata:
+  labels:
+    app.kubernetes.io/name: pp-vpa
+    app.kubernetes.io/managed-by: kustomize
+  name: podresourcerecommendation-sample
+spec:
+  # TODO(user): Add fields here

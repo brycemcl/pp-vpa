@@ -1,0 +1,103 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: pp-vpa-node-agent
+  namespace: pp-vpa-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pp-vpa-node-agent
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/resize"]
+    verbs: ["patch", "update"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["podresourcerecommendations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["podresourcerecommendations/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["perpodverticalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pp-vpa-node-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pp-vpa-node-agent
+subjects:
+  - kind: ServiceAccount
+    name: pp-vpa-node-agent
+    namespace: pp-vpa-system
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pp-vpa-node-agent
+  namespace: pp-vpa-system
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pp-vpa
+      app.kubernetes.io/component: node-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pp-vpa
+        app.kubernetes.io/component: node-agent
+    spec:
+      serviceAccountName: pp-vpa-node-agent
+      hostPID: false
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: pp-vpa
+          image: ghcr.io/brycemclachlan/pp-vpa:latest
+          imagePullPolicy: IfNotPresent
+          args:
+            - --mode=node-agent
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --kubelet-config=/host/var/lib/kubelet/config.yaml
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: false
+            runAsNonRoot: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cgroup
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: kubelet-config
+              mountPath: /host/var/lib/kubelet
+              readOnly: true
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: /sys/fs/cgroup
+            type: Directory
+        - name: kubelet-config
+          hostPath:
+            path: /var/lib/kubelet
+            type: Directory

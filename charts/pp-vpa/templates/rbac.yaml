@@ -1,0 +1,77 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pp-vpa-manager
+rules:
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources:
+      - perpodverticalpodautoscalers
+      - perpodverticalpodautoscalers/status
+      - perpodverticalpodautoscalers/finalizers
+      - perpodverticalpodautoscalers/scale
+      - podresourcerecommendations
+      - podresourcerecommendations/status
+      - perpodverticalpodautoscalercheckpoints
+      - perpodverticalpodautoscalercheckpoints/status
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/eviction", "events"]
+    verbs: ["create", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "deployments/scale", "replicasets"]
+    verbs: ["get", "list", "watch", "update", "patch"]
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pp-vpa-manager
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pp-vpa-manager
+subjects:
+  - kind: ServiceAccount
+    name: pp-vpa-manager
+    namespace: {{ .Values.namespace }}
+{{- if .Values.nodeAgent.enabled }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: pp-vpa-node-agent
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/resize"]
+    verbs: ["patch", "update"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["podresourcerecommendations"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["podresourcerecommendations/status"]
+    verbs: ["get", "patch", "update"]
+  - apiGroups: ["autoscaling.brycemclachlan.me"]
+    resources: ["perpodverticalpodautoscalers"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: pp-vpa-node-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: pp-vpa-node-agent
+subjects:
+  - kind: ServiceAccount
+    name: pp-vpa-node-agent
+    namespace: {{ .Values.namespace }}
+{{- end }}

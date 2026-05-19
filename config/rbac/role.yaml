@@ -1,0 +1,84 @@
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: manager-role
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - events
+  verbs:
+  - create
+  - patch
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - pods/eviction
+  verbs:
+  - create
+- apiGroups:
+  - apps
+  resources:
+  - deployments
+  verbs:
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - apps
+  resources:
+  - deployments/scale
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - apps
+  resources:
+  - replicasets
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - autoscaling.brycemclachlan.me
+  resources:
+  - perpodverticalpodautoscalercheckpoints
+  - perpodverticalpodautoscalers
+  - podresourcerecommendations
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - autoscaling.brycemclachlan.me
+  resources:
+  - perpodverticalpodautoscalercheckpoints/status
+  - perpodverticalpodautoscalers/status
+  - podresourcerecommendations/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - autoscaling.brycemclachlan.me
+  resources:
+  - perpodverticalpodautoscalers/finalizers
+  - podresourcerecommendations/finalizers
+  verbs:
+  - update

@@ -1,0 +1,14 @@
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: PriorityLevelConfiguration
+metadata:
+  name: pp-vpa-node-agents
+spec:
+  type: Limited
+  limited:
+    nominalConcurrencyShares: 50
+    limitResponse:
+      type: Queue
+      queuing:
+        queueLengthLimit: 200
+        queues: 128
+        handSize: 8

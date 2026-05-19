@@ -1,0 +1,36 @@
+apiVersion: flowcontrol.apiserver.k8s.io/v1
+kind: FlowSchema
+metadata:
+  name: pp-vpa-control-plane
+spec:
+  matchingPrecedence: 800
+  priorityLevelConfiguration:
+    name: pp-vpa-control-plane
+  distinguisherMethod:
+    type: ByUser
+  rules:
+    - subjects:
+        - kind: ServiceAccount
+          serviceAccount:
+            namespace: pp-vpa-system
+            name: pp-vpa-manager
+      resourceRules:
+        - verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+          apiGroups: ["autoscaling.brycemclachlan.me"]
+          resources:
+            - perpodverticalpodautoscalers
+            - perpodverticalpodautoscalers/status
+            - perpodverticalpodautoscalers/scale
+            - podresourcerecommendations
+            - podresourcerecommendations/status
+            - perpodverticalpodautoscalercheckpoints
+            - perpodverticalpodautoscalercheckpoints/status
+        - verbs: ["get", "list", "watch", "patch", "update"]
+          apiGroups: [""]
+          resources: ["pods"]
+        - verbs: ["create"]
+          apiGroups: [""]
+          resources: ["pods/eviction", "events"]
+        - verbs: ["get", "list", "watch", "patch", "update"]
+          apiGroups: ["apps"]
+          resources: ["deployments", "deployments/scale"]

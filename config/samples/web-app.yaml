@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-app
+  namespace: prod
+spec:
+  replicas: 5
+  selector:
+    matchLabels: { app: web-app }
+  template:
+    metadata:
+      labels: { app: web-app }
+    spec:
+      containers:
+        - name: web-app
+          image: ghcr.io/brycemclachlan/sample-web:latest
+          resources:
+            requests:
+              cpu: 200m
+              memory: 256Mi
+---
+apiVersion: autoscaling.brycemclachlan.me/v1alpha1
+kind: PerPodVerticalPodAutoscaler
+metadata:
+  name: web-app-ppvpa
+  namespace: prod
+spec:
+  targetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: web-app
+  # HPA writes Scale.spec.replicas → spec.targetReplicas.
+  targetReplicas: 5
+  updatePolicy:
+    updateMode: InPlace
+    anomalyEvictionTimeoutSeconds: 900
+    significantChangeThresholdPercentage: 10
+    infeasibleUpdateBehavior:
+      maxSurge: "25%"
+      maxUnavailable: 0
+    burstTimeoutSeconds: 600
+  resourcePolicy:
+    podLevelPolicies:
+      - resourceName: memory
+        minAllowed: 512Mi
+        maxAllowed: 16Gi
+    containerPolicies:
+      - containerName: "*"
+        minAllowed:
+          cpu: 100m
+        maxAllowed:
+          cpu: "4"
+  recommenderPolicy:
+    targetPercentile: "90.0"
+    lowerBoundPercentile: "50.0"
+    upperBoundPercentile: "95.0"
+    safetyMarginPercentage: 15
+  scalingThresholds:
+    cpu:
+      scaleUpPSI: "10.0"
+      scaleDownBufferDropPercentage: 20
+    memory:
+      scaleUpPSI: "5.0"
+      watermarkDecayWindowHours: 24

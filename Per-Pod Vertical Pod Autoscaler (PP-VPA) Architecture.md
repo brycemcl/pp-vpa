@@ -61,6 +61,9 @@ spec:
       scaleUpPSI: 5.0  
       watermarkDecayWindowHours: 24 \# Slowly lower the high-watermark if not hit within 24h  
         
+  # HPA writes Scale.spec.replicas → spec.targetReplicas (see §4).
+  targetReplicas: 5
+
 status:  
   defaultRecommendation:  
     podLevelTarget: { memory: 2Gi }  
@@ -71,7 +74,6 @@ status:
         uncappedTarget: { cpu: 550m }   
         upperBound: { cpu: 800m }
 
-  targetReplicas: 5   
   activeReplicas: 5   
   temporaryReplicas: 0 
 
@@ -163,7 +165,7 @@ status:
 
 ### **Horizontal Pod Autoscaler (HPA) Integration**
 
-The HPA targets the PerPodVerticalPodAutoscaler object. It adjusts status.targetReplicas, while the PP-VPA manages the underlying Deployment replicas, isolating the HPA from temporary maxSurge inflation. The PerPodVerticalPodAutoscaler CRD exposes a /scale subresource (specReplicasPath=.status.targetReplicas, statusReplicasPath=.status.activeReplicas), which is the actual mechanism the HPA uses to target it.
+The HPA targets the PerPodVerticalPodAutoscaler object. It writes Scale.spec.replicas → spec.targetReplicas and reads Scale.status.replicas ← status.activeReplicas. The PP-VPA controller then reconciles Deployment.spec.replicas to spec.targetReplicas + status.temporaryReplicas, isolating the HPA from temporary maxSurge inflation. The PerPodVerticalPodAutoscaler CRD exposes a /scale subresource declaratively via the kubebuilder marker `+kubebuilder:subresource:scale:specpath=.spec.targetReplicas,statuspath=.status.activeReplicas`. Note: Kubernetes requires specpath under `.spec`, so the CRD differs from earlier drafts that placed targetReplicas in status.
 
 ### **Pod Disruption Budgets (PDB) Integration**
 

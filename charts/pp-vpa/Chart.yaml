@@ -1,0 +1,14 @@
+apiVersion: v2
+name: pp-vpa
+description: Per-Pod Vertical Pod Autoscaler (PP-VPA) — PSI-driven, edge-actuated in-place updates.
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.33.0"
+home: https://github.com/brycemclachlan/pp-vpa
+sources:
+  - https://github.com/brycemclachlan/pp-vpa
+# cert-manager is a hard prerequisite for the webhook but is intentionally not
+# packaged as a subchart — operators install it separately so a single
+# cert-manager can serve many charts. The Helm chart consumes it via the Issuer
+# and Certificate resources in templates/webhook.yaml.

@@ -1,0 +1,59 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: pp-vpa-webhook
+  namespace: {{ .Values.namespace }}
+spec:
+  selector:
+    app.kubernetes.io/name: pp-vpa
+    app.kubernetes.io/component: manager
+  ports:
+    - port: 443
+      targetPort: webhook
+---
+apiVersion: cert-manager.io/v1
+kind: Issuer
+metadata:
+  name: {{ .Values.webhook.certManager.issuerName }}
+  namespace: {{ .Values.namespace }}
+spec:
+  selfSigned: {}
+---
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: pp-vpa-webhook-cert
+  namespace: {{ .Values.namespace }}
+spec:
+  secretName: pp-vpa-webhook-cert
+  dnsNames:
+    - pp-vpa-webhook.{{ .Values.namespace }}.svc
+    - pp-vpa-webhook.{{ .Values.namespace }}.svc.cluster.local
+  issuerRef:
+    kind: Issuer
+    name: {{ .Values.webhook.certManager.issuerName }}
+---
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: pp-vpa-pod
+  annotations:
+    cert-manager.io/inject-ca-from: {{ .Values.namespace }}/pp-vpa-webhook-cert
+webhooks:
+  - name: mpod.pp-vpa.brycemclachlan.me
+    admissionReviewVersions: ["v1"]
+    sideEffects: None
+    failurePolicy: Ignore
+    timeoutSeconds: 5
+    rules:
+      - apiGroups: [""]
+        apiVersions: ["v1"]
+        resources: ["pods"]
+        operations: ["CREATE"]
+    clientConfig:
+      service:
+        name: pp-vpa-webhook
+        namespace: {{ .Values.namespace }}
+        path: /mutate-k8s-io-v1-pod
+{{- end }}

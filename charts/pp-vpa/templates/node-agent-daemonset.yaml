@@ -1,0 +1,61 @@
+{{- if .Values.nodeAgent.enabled }}
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: pp-vpa-node-agent
+  namespace: {{ .Values.namespace }}
+  labels:
+    app.kubernetes.io/name: pp-vpa
+    app.kubernetes.io/component: node-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: pp-vpa
+      app.kubernetes.io/component: node-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: pp-vpa
+        app.kubernetes.io/component: node-agent
+    spec:
+      serviceAccountName: pp-vpa-node-agent
+      tolerations:
+        - operator: Exists
+      containers:
+        - name: pp-vpa
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - --mode=node-agent
+            - --cgroup-root=/host/sys/fs/cgroup
+            - --kubelet-config=/host/var/lib/kubelet/config.yaml
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          securityContext:
+            privileged: false
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          volumeMounts:
+            - name: cgroup
+              mountPath: /host/sys/fs/cgroup
+              readOnly: true
+            - name: kubelet
+              mountPath: /host/var/lib/kubelet
+              readOnly: true
+          resources:
+{{ toYaml .Values.nodeAgent.resources | indent 12 }}
+      volumes:
+        - name: cgroup
+          hostPath:
+            path: {{ .Values.nodeAgent.cgroupRoot }}
+            type: Directory
+        - name: kubelet
+          hostPath:
+            path: {{ .Values.nodeAgent.kubeletConfigDir }}
+            type: Directory
+{{- end }}

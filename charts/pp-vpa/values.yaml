@@ -1,0 +1,44 @@
+image:
+  repository: ghcr.io/brycemclachlan/pp-vpa
+  tag: latest
+  pullPolicy: IfNotPresent
+
+namespace: pp-vpa-system
+
+manager:
+  replicas: 1
+  leaderElection: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 1
+      memory: 512Mi
+
+nodeAgent:
+  enabled: true
+  cgroupRoot: /sys/fs/cgroup
+  kubeletConfigDir: /var/lib/kubelet
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+
+webhook:
+  enabled: true
+  certManager:
+    issuerName: pp-vpa-selfsigned
+
+apf:
+  enabled: true
+  controlPlane:
+    assuredConcurrencyShares: 30
+  nodeAgents:
+    assuredConcurrencyShares: 50
+
+cert-manager:
+  enabled: false   # require cert-manager pre-installed by default
