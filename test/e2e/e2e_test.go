@@ -37,7 +37,7 @@ const namespace = "pp-vpa-system"
 
 const serviceAccountName = "pp-vpa-manager"
 
-const metricsServiceName = "pp-vpa-webhook"
+const metricsServiceName = "pp-vpa-metrics"
 
 const metricsRoleBindingName = "pp-vpa-metrics-binding"
 
@@ -252,7 +252,7 @@ var _ = Describe("Manager", Ordered, func() {
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
 							"args": [
-								"for i in $(seq 1 30); do curl -v -k -H 'Authorization: Bearer %s' https://%s.%s.svc.cluster.local/metrics && exit 0 || sleep 2; done; exit 1"
+								"for i in $(seq 1 30); do curl -v -H 'Authorization: Bearer %s' http://%s.%s.svc.cluster.local/metrics && exit 0 || sleep 2; done; exit 1"
 							],
 							"securityContext": {
 								"readOnlyRootFilesystem": true,
