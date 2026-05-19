@@ -1,16 +1,10 @@
 name: e2e
-# Slow checks (kind cluster + scenario suite). Runs on:
-#   - direct pushes to main           — catches breaks before they hit release
-#   - PRs labeled `e2e`               — opt-in for risky changes
-#   - nightly cron                    — guards against drift
-#   - manual workflow_dispatch        — for ad-hoc validation
-# Feature branches do NOT run e2e by default; add the `e2e` label on the PR
-# when in doubt.
+# Slow checks (kind cluster + scenario suite). Runs on every PR to main and
+# every push to main, plus a nightly cron and manual dispatch.
 on:
   push:
     branches: ["main"]
   pull_request:
-    types: [labeled, synchronize]
     branches: ["main"]
   schedule:
     - cron: "0 4 * * *"
@@ -25,11 +19,6 @@ permissions:
 
 jobs:
   kind:
-    # On PRs, only run when the `e2e` label is present. Push/schedule/dispatch
-    # always run.
-    if: >-
-      github.event_name != 'pull_request' ||
-      contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
