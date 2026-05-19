@@ -25,10 +25,10 @@ import (
 type ContainerType int
 
 const (
-	Regular             ContainerType = iota
-	SidecarInit                       // restartPolicy: Always (init container)
-	NonRestartableInit                // restartPolicy: Apply (init container)
-	Ephemeral                         // ephemeral container
+	Regular            ContainerType = iota
+	SidecarInit                      // restartPolicy: Always (init container)
+	NonRestartableInit               // restartPolicy: Apply (init container)
+	Ephemeral                        // ephemeral container
 )
 
 // ResizeContext holds everything needed to validate a proposed resize.

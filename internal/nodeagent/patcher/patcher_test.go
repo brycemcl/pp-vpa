@@ -96,20 +96,20 @@ func TestSubmitRejectsWindowsPod(t *testing.T) {
 func TestPendingPatchPreservesValidationFields(t *testing.T) {
 	q := NewQueue()
 	p := PendingPatch{
-		Namespace:      "ns",
-		Pod:            "pod",
-		Container:      "c",
-		QoS:            corev1.PodQOSBurstable,
-		ContainerType:  validate.SidecarInit,
-		CurrentCPU:     resource.MustParse("50m"),
-		CurrentMemory:  resource.MustParse("64Mi"),
-		NewCPU:         resource.MustParse("100m"),
-		NewMemory:      resource.MustParse("128Mi"),
-		ResizePolicies: []corev1.ContainerResizePolicy{{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}},
-		NodeTotalCPU:   10,
+		Namespace:       "ns",
+		Pod:             "pod",
+		Container:       "c",
+		QoS:             corev1.PodQOSBurstable,
+		ContainerType:   validate.SidecarInit,
+		CurrentCPU:      resource.MustParse("50m"),
+		CurrentMemory:   resource.MustParse("64Mi"),
+		NewCPU:          resource.MustParse("100m"),
+		NewMemory:       resource.MustParse("128Mi"),
+		ResizePolicies:  []corev1.ContainerResizePolicy{{ResourceName: corev1.ResourceCPU, RestartPolicy: corev1.NotRequired}},
+		NodeTotalCPU:    10,
 		NodeTotalMemory: 1 << 30,
-		DeltaCPU:       0.05,
-		DeltaMemory:    64 << 20,
+		DeltaCPU:        0.05,
+		DeltaMemory:     64 << 20,
 	}
 	q.Push(p)
 	got, ok := q.Pop()
