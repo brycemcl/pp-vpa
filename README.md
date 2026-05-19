@@ -1,19 +1,46 @@
 # pp-vpa
-// TODO(user): Add simple overview of use/purpose
 
-## Description
-// TODO(user): An in-depth paragraph about your project and overview of use
+Per-Pod Vertical Pod Autoscaler — PSI-driven, edge-actuated in-place updates. See the [architecture doc](Per-Pod%20Vertical%20Pod%20Autoscaler%20%28PP-VPA%29%20Architecture.md) for the design.
 
-## Getting Started
+## Install
 
-### Prerequisites
-- go version v1.24.6+
-- docker version 17.03+.
-- kubectl version v1.11.3+.
-- Access to a Kubernetes v1.11.3+ cluster.
+### Helm (Pages repo)
 
-### To Deploy on the cluster
-**Build and push your image to the location specified by `IMG`:**
+```sh
+helm repo add pp-vpa https://brycemclachlan.github.io/pp-vpa
+helm repo update
+helm install pp-vpa pp-vpa/pp-vpa \
+  --namespace pp-vpa-system --create-namespace
+```
+
+### Helm (OCI registry)
+
+```sh
+helm install pp-vpa oci://ghcr.io/brycemclachlan/charts/pp-vpa \
+  --version 0.1.0 \
+  --namespace pp-vpa-system --create-namespace
+```
+
+### Container image directly
+
+```sh
+docker pull ghcr.io/brycemclachlan/pp-vpa:latest
+```
+
+Available tags:
+- `latest` / `vX.Y.Z` — published from a release tag
+- `main` — rolling build of the main branch
+- `sha-<commit>` — pinnable per-commit tag
+
+Images are multi-arch (`linux/amd64`, `linux/arm64`) and signed with cosign (keyless via GitHub Actions OIDC):
+
+```sh
+cosign verify ghcr.io/brycemclachlan/pp-vpa:v0.1.0 \
+  --certificate-identity-regexp 'https://github.com/brycemclachlan/pp-vpa/.+' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+```
+
+## Build locally
 
 ```sh
 make docker-build docker-push IMG=<some-registry>/pp-vpa:tag

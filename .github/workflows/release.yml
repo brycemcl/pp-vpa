@@ -1,37 +1,286 @@
 name: release
 on:
   push:
+    branches: ["main"]
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.0). Leave blank to snapshot HEAD."
+        required: false
+
 permissions:
-  contents: write
-  packages: write
+  contents: write   # create the GitHub Release, push to gh-pages
+  packages: write   # push to GHCR (image + OCI chart)
+  id-token: write   # cosign keyless signing via OIDC
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
 jobs:
+  # One GitHub Release per ref. Two kinds:
+  #   1. tag push (vX.Y.Z) → semver release; updates gh-pages index, latest.
+  #   2. main push        → snapshot release tagged `sha-<short>`; prerelease,
+  #                          NOT marked latest, NOT indexed on gh-pages.
+  # In both cases the GitHub Release bundles the image tags + the chart tarball.
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      # ── Classify the event and derive identifiers ─────────────────────
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          fetch-depth: 0   # full history for index merges + release notes
+
+      - name: Resolve release identity
+        id: id
+        run: |
+          set -euo pipefail
+          short_sha="$(git rev-parse --short=12 HEAD)"
+          long_sha="$(git rev-parse HEAD)"
+          echo "short_sha=${short_sha}" >> "$GITHUB_OUTPUT"
+          echo "long_sha=${long_sha}"   >> "$GITHUB_OUTPUT"
+
+          # If the user/tag dispatch passed an explicit tag, treat it as a release.
+          requested_tag="${{ inputs.tag }}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            tag="${GITHUB_REF#refs/tags/}"
+            echo "kind=release"             >> "$GITHUB_OUTPUT"
+            echo "release_tag=${tag}"       >> "$GITHUB_OUTPUT"
+            echo "chart_version=${tag#v}"   >> "$GITHUB_OUTPUT"
+            echo "image_version=${tag}"     >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"         >> "$GITHUB_OUTPUT"
+            echo "make_latest=true"         >> "$GITHUB_OUTPUT"
+            echo "update_pages=true"        >> "$GITHUB_OUTPUT"
+          elif [[ -n "${requested_tag}" ]]; then
+            tag="${requested_tag}"
+            echo "kind=release"             >> "$GITHUB_OUTPUT"
+            echo "release_tag=${tag}"       >> "$GITHUB_OUTPUT"
+            echo "chart_version=${tag#v}"   >> "$GITHUB_OUTPUT"
+            echo "image_version=${tag}"     >> "$GITHUB_OUTPUT"
+            echo "prerelease=false"         >> "$GITHUB_OUTPUT"
+            echo "make_latest=true"         >> "$GITHUB_OUTPUT"
+            echo "update_pages=true"        >> "$GITHUB_OUTPUT"
+          else
+            # Snapshot: every commit to main gets a Release whose tag is sha-<short>.
+            # Chart/image versions are derived SemVer prereleases so Helm/OCI accept them.
+            echo "kind=snapshot"                                  >> "$GITHUB_OUTPUT"
+            echo "release_tag=sha-${short_sha}"                   >> "$GITHUB_OUTPUT"
+            echo "chart_version=0.0.0-sha.${short_sha}"           >> "$GITHUB_OUTPUT"
+            echo "image_version=sha-${short_sha}"                 >> "$GITHUB_OUTPUT"
+            echo "prerelease=true"                                >> "$GITHUB_OUTPUT"
+            echo "make_latest=false"                              >> "$GITHUB_OUTPUT"
+            echo "update_pages=false"                             >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - name: login to ghcr
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
         uses: docker/login-action@v3
         with:
-          registry: ghcr.io
+          registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: build & push image
-        uses: docker/build-push-action@v5
-        with:
-          push: true
-          tags: |
-            ghcr.io/${{ github.repository }}:${{ github.ref_name }}
-            ghcr.io/${{ github.repository }}:latest
-      - name: package helm chart
+
+      # ── 1. Container image ────────────────────────────────────────────
+      - name: Compute image tags
+        id: image_tags
         run: |
-          helm package charts/pp-vpa --destination .helm-out
-      - name: publish chart to gh-pages
-        uses: helm/chart-releaser-action@v1
+          base="${REGISTRY}/${IMAGE_NAME}"
+          tags=()
+          if [[ "${{ steps.id.outputs.kind }}" == "release" ]]; then
+            v="${{ steps.id.outputs.image_version }}"
+            stripped="${v#v}"
+            tags+=("${base}:${v}")
+            tags+=("${base}:${stripped}")
+            # Major.minor and major channel tags.
+            IFS='.' read -r major minor patch <<<"${stripped}"
+            [[ -n "${minor:-}" ]] && tags+=("${base}:${major}.${minor}")
+            [[ -n "${major:-}" ]] && tags+=("${base}:${major}")
+            tags+=("${base}:latest")
+          else
+            tags+=("${base}:${{ steps.id.outputs.image_version }}")
+            tags+=("${base}:sha-${{ steps.id.outputs.long_sha }}")
+            tags+=("${base}:main")
+          fi
+          {
+            echo "tags<<EOF"
+            printf '%s\n' "${tags[@]}"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
         env:
-          CR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REGISTRY: ${{ env.REGISTRY }}
+          IMAGE_NAME: ${{ env.IMAGE_NAME }}
+
+      - name: Build and push image
+        id: build
+        uses: docker/build-push-action@v6
         with:
-          charts_dir: charts
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.image_tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.licenses=Apache-2.0
+            org.opencontainers.image.title=pp-vpa
+            org.opencontainers.image.description=Per-Pod Vertical Pod Autoscaler — PSI-driven in-place updates
+            org.opencontainers.image.revision=${{ steps.id.outputs.long_sha }}
+            org.opencontainers.image.version=${{ steps.id.outputs.image_version }}
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign image
+        env:
+          TAGS: ${{ steps.image_tags.outputs.tags }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          echo "${TAGS}" | xargs -I{} cosign sign --yes "{}@${DIGEST}"
+
+      # ── 2. Helm chart ─────────────────────────────────────────────────
+      - name: Sync CRDs into chart
+        run: |
+          mkdir -p charts/pp-vpa/crds
+          cp config/crd/bases/*.yaml charts/pp-vpa/crds/
+
+      - name: Pin chart image tag
+        run: |
+          # Default the chart's image.tag to the matching image version so
+          # `helm install` pulls the image we just published.
+          sed -i "s|tag: latest|tag: ${{ steps.id.outputs.image_version }}|" charts/pp-vpa/values.yaml
+
+      - name: Package chart
+        id: package
+        run: |
+          mkdir -p .helm-out
+          helm package charts/pp-vpa \
+            --destination .helm-out \
+            --version "${{ steps.id.outputs.chart_version }}" \
+            --app-version "${{ steps.id.outputs.image_version }}"
+          tgz=$(ls .helm-out/pp-vpa-*.tgz)
+          echo "tgz=${tgz}" >> "$GITHUB_OUTPUT"
+          echo "basename=$(basename ${tgz})" >> "$GITHUB_OUTPUT"
+
+      - name: Push chart to GHCR (OCI)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" \
+            | helm registry login ${REGISTRY} -u ${{ github.actor }} --password-stdin
+          helm push "${{ steps.package.outputs.tgz }}" oci://${REGISTRY}/${{ github.repository_owner }}/charts
+        env:
+          REGISTRY: ${{ env.REGISTRY }}
+
+      # ── 3. Single GitHub Release with chart tarball + image info ──────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.id.outputs.release_tag }}
+          name: ${{ steps.id.outputs.release_tag }}
+          target_commitish: ${{ steps.id.outputs.long_sha }}
+          prerelease: ${{ steps.id.outputs.prerelease }}
+          make_latest: ${{ steps.id.outputs.make_latest }}
+          generate_release_notes: true
+          files: |
+            ${{ steps.package.outputs.tgz }}
+          body: |
+            ## Artifacts
+
+            Commit `${{ steps.id.outputs.long_sha }}`.
+
+            ### Container image
+            Multi-arch (`linux/amd64`, `linux/arm64`), cosign-signed via GitHub OIDC.
+
+            ```
+            ghcr.io/${{ github.repository }}:${{ steps.id.outputs.image_version }}
+            ghcr.io/${{ github.repository }}@${{ steps.build.outputs.digest }}
+            ```
+
+            Verify:
+            ```
+            cosign verify ghcr.io/${{ github.repository }}:${{ steps.id.outputs.image_version }} \
+              --certificate-identity-regexp 'https://github.com/${{ github.repository }}/.+' \
+              --certificate-oidc-issuer https://token.actions.githubusercontent.com
+            ```
+
+            ### Helm chart
+            Attached as `${{ steps.package.outputs.basename }}` below. Also available via:
+
+            ```
+            # OCI
+            helm install pp-vpa oci://ghcr.io/${{ github.repository_owner }}/charts/pp-vpa \
+              --version ${{ steps.id.outputs.chart_version }}
+
+            # GitHub Pages repo (tagged releases only)
+            helm repo add pp-vpa https://${{ github.repository_owner }}.github.io/pp-vpa
+            helm install pp-vpa pp-vpa/pp-vpa --version ${{ steps.id.outputs.chart_version }}
+            ```
+
+      # ── 4. Maintain the gh-pages Helm index (tagged releases only) ────
+      - name: Update gh-pages Helm index
+        if: steps.id.outputs.update_pages == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.id.outputs.release_tag }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tgz="${{ steps.package.outputs.tgz }}"
+          url="https://github.com/${REPO}/releases/download/${TAG}/$(basename "${tgz}")"
+
+          worktree="$(mktemp -d)"
+          if ! git ls-remote --exit-code --heads origin gh-pages >/dev/null 2>&1; then
+            git worktree add --orphan -B gh-pages "${worktree}"
+            (cd "${worktree}" && git rm -rf . >/dev/null 2>&1 || true)
+          else
+            git fetch origin gh-pages
+            git worktree add "${worktree}" gh-pages
+          fi
+
+          mkdir -p "${worktree}/charts"
+          cp "${tgz}" "${worktree}/charts/"
+
+          if [[ -f "${worktree}/index.yaml" ]]; then
+            helm repo index "${worktree}/charts" --url "https://github.com/${REPO}/releases/download/${TAG}" --merge "${worktree}/index.yaml"
+            mv "${worktree}/charts/index.yaml" "${worktree}/index.yaml"
+          else
+            helm repo index "${worktree}/charts" --url "https://github.com/${REPO}/releases/download/${TAG}"
+            mv "${worktree}/charts/index.yaml" "${worktree}/index.yaml"
+          fi
+
+          sed -i "s|charts/$(basename "${tgz}")|${url}|g" "${worktree}/index.yaml"
+
+          # Tarball lives on the GitHub Release; keep gh-pages clean.
+          rm -f "${worktree}/charts/$(basename "${tgz}")"
+          rmdir "${worktree}/charts" 2>/dev/null || true
+
+          (
+            cd "${worktree}"
+            git add -A
+            git commit -m "release: ${TAG}" || exit 0
+            git push origin gh-pages
+          )
