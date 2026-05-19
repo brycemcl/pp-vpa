@@ -1,35 +1,76 @@
 name: e2e
+# Slow checks (kind cluster + scenario suite). Runs on:
+#   - direct pushes to main           — catches breaks before they hit release
+#   - PRs labeled `e2e`               — opt-in for risky changes
+#   - nightly cron                    — guards against drift
+#   - manual workflow_dispatch        — for ad-hoc validation
+# Feature branches do NOT run e2e by default; add the `e2e` label on the PR
+# when in doubt.
 on:
+  push:
+    branches: ["main"]
   pull_request:
-    types: [labeled]
+    types: [labeled, synchronize]
+    branches: ["main"]
   schedule:
-    - cron: "0 4 * * *"  # nightly
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: e2e-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 jobs:
   kind:
-    if: github.event.label.name == 'e2e' || github.event_name == 'schedule'
+    # On PRs, only run when the `e2e` label is present. Push/schedule/dispatch
+    # always run.
+    if: >-
+      github.event_name != 'pull_request' ||
+      contains(github.event.pull_request.labels.*.name, 'e2e')
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
+          cache: true
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
       - uses: helm/kind-action@v1
         with:
           config: hack/e2e/kind-config.yaml
+          cluster_name: pp-vpa-e2e
+
       - name: build image and load into kind
         run: |
           docker build -t pp-vpa:dev .
-          kind load docker-image pp-vpa:dev --name chart-testing
+          kind load docker-image pp-vpa:dev --name pp-vpa-e2e
+
       - name: install cert-manager
         run: |
           helm repo add jetstack https://charts.jetstack.io
           helm install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
-            --set crds.enabled=true
+            --set crds.enabled=true --wait
+
       - name: install pp-vpa
         run: |
           helm install pp-vpa charts/pp-vpa \
             --set image.repository=pp-vpa --set image.tag=dev \
-            --create-namespace --namespace pp-vpa-system
+            --namespace pp-vpa-system --create-namespace --wait
+
       - name: run e2e
-        run: go test -tags=e2e -count=1 ./test/e2e/...
+        run: go test -tags=e2e -count=1 -timeout 20m ./test/e2e/...
+
+      - name: dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n pp-vpa-system describe deploy pp-vpa-manager || true
+          kubectl -n pp-vpa-system logs deploy/pp-vpa-manager --tail=200 || true
+          kubectl -n pp-vpa-system logs ds/pp-vpa-node-agent --tail=200 || true

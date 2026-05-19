@@ -9,6 +9,13 @@ on:
         description: "Tag to release (e.g. v0.1.0). Leave blank to snapshot HEAD."
         required: false
 
+# Each ref (tag or commit) is its own release, so serialize per ref but do not
+# cancel — releases must finish. Two commits to main race only with themselves
+# under the same SHA, which never happens.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: write   # create the GitHub Release, push to gh-pages
   packages: write   # push to GHCR (image + OCI chart)

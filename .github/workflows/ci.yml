@@ -1,11 +1,25 @@
 name: ci
+# Fast checks. Required gate for merges. Runs on:
+#   - PRs targeting main (any source branch, including forks)
+#   - direct pushes to main (post-merge verification)
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
+  push:
+    branches: ["main"]
+
+# Cancel superseded runs on the same branch/PR so feature-branch noise
+# doesn't pile up. Main runs are preserved (each commit gets its own group).
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
 jobs:
-  build-test:
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -13,13 +27,61 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - name: vet
-        run: go vet ./...
-      - name: unit tests
-        run: go test -race ./...
-      - name: build
-        run: go build ./...
-      - name: lint
+      - name: golangci-lint
         uses: golangci/golangci-lint-action@v6
         with:
           version: v1.62.0
+
+  unit:
+    name: vet + unit + envtest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
+        run: go vet ./...
+      - name: build
+        run: go build ./...
+      # `make test` provisions envtest binaries and runs ginkgo + race unit tests.
+      - name: make test
+        run: make test
+
+  manifests:
+    name: manifest drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      # PRs that change api/v1alpha1/*_types.go must re-run controller-gen.
+      # This job fails if the generated CRDs/deepcopy lag behind the source.
+      - name: regenerate
+        run: make generate manifests
+      - name: assert clean tree
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated manifests are out of date. Run 'make generate manifests' and commit the result."
+            exit 1
+          fi
+
+  helm:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.16.0
+      - name: helm lint
+        run: helm lint charts/pp-vpa
+      - name: helm template smoke
+        # Render with defaults and with apf disabled to make sure both modes parse.
+        run: |
+          helm template demo charts/pp-vpa > /dev/null
+          helm template demo charts/pp-vpa --set apf.enabled=false > /dev/null
+          helm template demo charts/pp-vpa --set nodeAgent.enabled=false > /dev/null
