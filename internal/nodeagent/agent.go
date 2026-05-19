@@ -21,6 +21,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -32,6 +33,7 @@ import (
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/oom"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/patcher"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/psi"
+	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/validate"
 	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/watermark"
 	"github.com/brycemclachlan/pp-vpa/internal/recommender/histogram"
 )
@@ -45,6 +47,14 @@ type Config struct {
 	CheckpointEvery time.Duration
 }
 
+// containerMeta holds per-container metadata needed for resize validation.
+type containerMeta struct {
+	containerType  validate.ContainerType
+	currentCPU     resource.Quantity
+	currentMemory  resource.Quantity
+	resizePolicies []corev1.ContainerResizePolicy
+}
+
 // podState is the per-pod telemetry held by the agent.
 type podState struct {
 	uid          string
@@ -53,6 +63,8 @@ type podState struct {
 	prrName      string
 	qos          corev1.PodQOSClass
 	cgroupPath   string
+	isWindows    bool
+	containers   map[string]containerMeta
 	cpu          *ingest.CPUStream
 	mem          *ingest.MemoryPeakExtractor
 	cpuWatermark *watermark.Watermark
@@ -143,18 +155,21 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 	if err != nil {
 		return err
 	}
+
+	isWindows := p.Spec.OS != nil && p.Spec.OS.Name == corev1.Windows
+	containers := extractContainerMeta(&p)
+
 	st := &podState{
 		uid: uid, namespace: p.Namespace, name: p.Name, prrName: prr.Name,
 		qos: p.Status.QOSClass, cgroupPath: slice,
+		isWindows:  isWindows,
+		containers: containers,
 		cpu: cs, mem: mp,
 		cpuWatermark: watermark.New(time.Hour),
 		memWatermark: watermark.New(24 * time.Hour),
 	}
 	if prr.Status.HistogramCheckpoint != "" {
 		if h, err := histogram.Decode(prr.Status.HistogramCheckpoint); err == nil {
-			// Best-effort restore into CPU stream's histogram. Memory peak
-			// extractor's histogram is separate; matching CRD-side storage is
-			// out of scope for this MVP.
 			_ = cs.Snapshot().Merge(h)
 		}
 	}
@@ -228,8 +243,48 @@ func (a *Agent) writeCheckpoints(ctx context.Context) {
 	}
 }
 
-// Enqueue queues a resize patch for the named container.
-func (a *Agent) Enqueue(p patcher.PendingPatch) { a.queue.Push(p) }
+// Enqueue validates and queues a resize patch for the named container.
+// Returns an error if the resize violates Kubernetes 1.36 in-place resize
+// limitations; in that case the patch is not queued.
+func (a *Agent) Enqueue(p patcher.PendingPatch) error {
+	a.mu.Lock()
+	var st *podState
+	for _, s := range a.pods {
+		if s.name == p.Pod && s.namespace == p.Namespace {
+			st = s
+			break
+		}
+	}
+	a.mu.Unlock()
+
+	if st == nil {
+		return fmt.Errorf("pod %s/%s not found in agent state", p.Namespace, p.Pod)
+	}
+
+	cm, ok := st.containers[p.Container]
+	if !ok {
+		return fmt.Errorf("container %q not found in pod %s/%s", p.Container, p.Namespace, p.Pod)
+	}
+
+	violations := validate.ValidateResize(validate.ResizeContext{
+		NodeCaps:       a.Caps,
+		QoS:            st.qos,
+		IsWindows:      st.isWindows,
+		ContainerType:  cm.containerType,
+		ContainerName:  p.Container,
+		CurrentCPU:     cm.currentCPU,
+		CurrentMemory:  cm.currentMemory,
+		ProposedCPU:    p.NewCPU,
+		ProposedMemory: p.NewMemory,
+		ResizePolicies: cm.resizePolicies,
+	})
+	if len(violations) > 0 {
+		return fmt.Errorf("resize validation failed for %s/%s:%s: %v", p.Namespace, p.Pod, p.Container, violations)
+	}
+
+	a.queue.Push(p)
+	return nil
+}
 
 // PodForUID returns the namespaced name registered for a pod UID.
 func (a *Agent) PodForUID(uid string) (types.NamespacedName, bool) {
@@ -240,4 +295,68 @@ func (a *Agent) PodForUID(uid string) (types.NamespacedName, bool) {
 		return types.NamespacedName{}, false
 	}
 	return types.NamespacedName{Namespace: st.namespace, Name: st.name}, true
+}
+
+// extractContainerMeta builds per-container metadata from a Pod object,
+// classifying each container and recording its allocated resources and
+// resize policies.
+func extractContainerMeta(pod *corev1.Pod) map[string]containerMeta {
+	m := make(map[string]containerMeta)
+
+	// Build a lookup of allocated resources from container statuses.
+	allocated := make(map[string]corev1.ResourceList)
+	for i := range pod.Status.ContainerStatuses {
+		cs := &pod.Status.ContainerStatuses[i]
+		if cs.AllocatedResources != nil {
+			allocated[cs.Name] = cs.AllocatedResources
+		}
+	}
+	for i := range pod.Status.InitContainerStatuses {
+		cs := &pod.Status.InitContainerStatuses[i]
+		if cs.AllocatedResources != nil {
+			allocated[cs.Name] = cs.AllocatedResources
+		}
+	}
+
+	// Regular containers.
+	for i := range pod.Spec.Containers {
+		c := &pod.Spec.Containers[i]
+		cm := containerMeta{containerType: validate.Regular}
+		if ar, ok := allocated[c.Name]; ok {
+			cm.currentCPU = ar[corev1.ResourceCPU]
+			cm.currentMemory = ar[corev1.ResourceMemory]
+		}
+		cm.resizePolicies = c.ResizePolicy
+		m[c.Name] = cm
+	}
+
+	// Init containers — classify as SidecarInit or NonRestartableInit.
+	for i := range pod.Spec.InitContainers {
+		c := &pod.Spec.InitContainers[i]
+		cm := containerMeta{}
+		if c.RestartPolicy != nil && *c.RestartPolicy == corev1.ContainerRestartPolicyAlways {
+			cm.containerType = validate.SidecarInit
+		} else {
+			cm.containerType = validate.NonRestartableInit
+		}
+		if ar, ok := allocated[c.Name]; ok {
+			cm.currentCPU = ar[corev1.ResourceCPU]
+			cm.currentMemory = ar[corev1.ResourceMemory]
+		}
+		cm.resizePolicies = c.ResizePolicy
+		m[c.Name] = cm
+	}
+
+	// Ephemeral containers.
+	for i := range pod.Spec.EphemeralContainers {
+		c := &pod.Spec.EphemeralContainers[i]
+		cm := containerMeta{containerType: validate.Ephemeral}
+		if ar, ok := allocated[c.Name]; ok {
+			cm.currentCPU = ar[corev1.ResourceCPU]
+			cm.currentMemory = ar[corev1.ResourceMemory]
+		}
+		m[c.Name] = cm
+	}
+
+	return m
 }

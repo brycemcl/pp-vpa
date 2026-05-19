@@ -21,9 +21,10 @@ import (
 
 // NodeCapabilities describes what an individual node supports.
 type NodeCapabilities struct {
-	CgroupV2         bool
-	SwapAccounting   bool
-	StaticCPUManager bool
+	CgroupV2            bool
+	SwapAccounting      bool
+	StaticCPUManager    bool
+	StaticMemoryManager bool
 }
 
 // ProbeNode inspects the kubelet config (default /var/lib/kubelet/config.yaml)
@@ -56,6 +57,9 @@ func ProbeNode(cgroupRoot, kubeletConfigPath string) (NodeCapabilities, error) {
 	}
 	if strings.Contains(string(b), "cpuManagerPolicy: static") {
 		caps.StaticCPUManager = true
+	}
+	if strings.Contains(string(b), "memoryManagerPolicy: static") {
+		caps.StaticMemoryManager = true
 	}
 	return caps, nil
 }

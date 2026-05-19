@@ -26,6 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/kubernetes"
+
+	"github.com/brycemclachlan/pp-vpa/internal/compat"
+	"github.com/brycemclachlan/pp-vpa/internal/nodeagent/validate"
 )
 
 // PendingPatch is one in-place resize request awaiting submission.
@@ -40,6 +43,13 @@ type PendingPatch struct {
 	NodeTotalMemory float64 // bytes
 	DeltaCPU        float64 // cores
 	DeltaMemory     float64 // bytes
+
+	// Fields for resize validation.
+	ContainerType  validate.ContainerType
+	CurrentCPU     resource.Quantity
+	CurrentMemory  resource.Quantity
+	QoS            corev1.PodQOSClass
+	ResizePolicies []corev1.ContainerResizePolicy
 }
 
 // Priority is the impact-magnitude score; larger = drained first.
@@ -105,13 +115,44 @@ func (h *patchHeap) Pop() any {
 
 // Submitter wraps the kubelet's pods/<name>/resize subresource.
 type Submitter struct {
-	Client kubernetes.Interface
+	Client   kubernetes.Interface
+	NodeCaps compat.NodeCapabilities
 }
 
 // Submit PATCHes the pod's resize subresource with the new resources for the
 // named container. Returns a kubernetes apierror so callers can dispatch on
 // 429 (Retry-After / APF) vs Forbidden (KEP-1287 unsupported).
 func (s *Submitter) Submit(ctx context.Context, p PendingPatch) error {
+	// Defense-in-depth: validate before hitting the API server.
+	violations := validate.ValidateResize(validate.ResizeContext{
+		NodeCaps:       s.NodeCaps,
+		QoS:            p.QoS,
+		ContainerType:  p.ContainerType,
+		ContainerName:  p.Container,
+		CurrentCPU:     p.CurrentCPU,
+		CurrentMemory:  p.CurrentMemory,
+		ProposedCPU:    p.NewCPU,
+		ProposedMemory: p.NewMemory,
+		ResizePolicies: p.ResizePolicies,
+	})
+	if len(violations) > 0 {
+		return fmt.Errorf("resize validation failed for container %q: %v", p.Container, violations)
+	}
+
+	// Build the requests list. For Guaranteed pods, requests==limits.
+	// For Burstable, only patch requests — preserve existing limit ratio.
+	requests := corev1.ResourceList{
+		corev1.ResourceCPU:    p.NewCPU,
+		corev1.ResourceMemory: p.NewMemory,
+	}
+	var limits corev1.ResourceList
+	if p.QoS == corev1.PodQOSGuaranteed {
+		limits = corev1.ResourceList{
+			corev1.ResourceCPU:    p.NewCPU,
+			corev1.ResourceMemory: p.NewMemory,
+		}
+	}
+
 	type containerPatch struct {
 		Name      string                      `json:"name"`
 		Resources corev1.ResourceRequirements `json:"resources"`
@@ -125,14 +166,8 @@ func (s *Submitter) Submit(ctx context.Context, p PendingPatch) error {
 	body, err := json.Marshal(podPatch{Spec: podSpec{Containers: []containerPatch{{
 		Name: p.Container,
 		Resources: corev1.ResourceRequirements{
-			Requests: corev1.ResourceList{
-				corev1.ResourceCPU:    p.NewCPU,
-				corev1.ResourceMemory: p.NewMemory,
-			},
-			Limits: corev1.ResourceList{
-				corev1.ResourceCPU:    p.NewCPU,
-				corev1.ResourceMemory: p.NewMemory,
-			},
+			Requests: requests,
+			Limits:   limits,
 		},
 	}}}})
 	if err != nil {
