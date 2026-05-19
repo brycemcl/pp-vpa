@@ -1,18 +1,13 @@
 name: e2e
-# Slow checks (kind cluster + scenario suite). Runs on every PR to main and
-# every push to main, plus a nightly cron and manual dispatch.
+# Slow checks (kind cluster + scenario suite). Runs only on PRs targeting
+# main — not on direct branch pushes, not on a cron, not on manual dispatch.
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
-  schedule:
-    - cron: "0 4 * * *"
-  workflow_dispatch:
 
 concurrency:
-  group: e2e-${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.head_ref || github.sha }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: e2e-${{ github.head_ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
