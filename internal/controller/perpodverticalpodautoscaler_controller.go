@@ -13,6 +13,7 @@ package controller
 import (
 	"context"
 	"fmt"
+	"slices"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -284,12 +285,7 @@ func (r *PerPodVerticalPodAutoscalerReconciler) SetupWithManager(mgr ctrl.Manage
 }
 
 func containsString(s []string, v string) bool {
-	for _, x := range s {
-		if x == v {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(s, v)
 }
 
 func removeString(s []string, v string) []string {

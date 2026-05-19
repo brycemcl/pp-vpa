@@ -49,7 +49,7 @@ func ProbeNode(cgroupRoot, kubeletConfigPath string) (NodeCapabilities, error) {
 		}
 		return caps, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(f)
 	if err != nil {
 		return caps, err

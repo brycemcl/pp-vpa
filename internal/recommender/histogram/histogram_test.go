@@ -22,7 +22,7 @@ func TestPercentileMonotonic(t *testing.T) {
 		t.Fatal(err)
 	}
 	base := time.Now()
-	for i := 0; i < 1000; i++ {
+	for i := range 1000 {
 		h.AddSample(float64(i%10)+0.1, 1.0, base)
 	}
 	p50 := h.Percentile(50)

@@ -40,7 +40,7 @@ func Parse(path string) (Events, error) {
 	if err != nil {
 		return Events{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var e Events
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {

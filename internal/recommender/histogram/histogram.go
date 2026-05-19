@@ -55,7 +55,7 @@ func (o Options) Validate() error {
 		return errors.New("HalfLife must be > 0")
 	}
 	if o.Epsilon < 0 {
-		return errors.New("Epsilon must be >= 0")
+		return errors.New("epsilon must be >= 0")
 	}
 	return nil
 }

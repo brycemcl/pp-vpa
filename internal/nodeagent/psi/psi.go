@@ -46,7 +46,7 @@ func ReadFile(path string) (Stats, error) {
 	if err != nil {
 		return Stats{}, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	return Parse(f)
 }
 
