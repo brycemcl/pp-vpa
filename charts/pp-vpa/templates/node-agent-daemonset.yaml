@@ -35,7 +35,7 @@ spec:
                 fieldRef:
                   fieldPath: spec.nodeName
           securityContext:
-            privileged: false
+            runAsUser: 0
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:

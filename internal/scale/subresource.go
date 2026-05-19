@@ -6,13 +6,19 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 // Package scale documents the /scale subresource integration with the HPA.
 //
 // The /scale subresource is exposed declaratively by the CRD marker
 //
-//	// +kubebuilder:subresource:scale:specpath=.status.targetReplicas,statuspath=.status.activeReplicas
+//	// +kubebuilder:subresource:scale:specpath=.spec.targetReplicas,statuspath=.status.activeReplicas
 //
 // on PerPodVerticalPodAutoscaler. The Kubernetes API server then serves a
 // virtual Scale subresource at

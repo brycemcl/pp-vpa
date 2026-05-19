@@ -6,6 +6,12 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 package controller
@@ -85,6 +91,11 @@ func (r *PerPodVerticalPodAutoscalerReconciler) Reconcile(ctx context.Context, r
 	if err := r.reconcileRecommendation(ctx, &ppvpa); err != nil {
 		log.Error(err, "computing recommendation")
 		return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	}
+
+	if err := r.reconcileAnomalies(ctx, &ppvpa); err != nil {
+		log.Error(err, "detecting anomalies")
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	if err := r.reconcileReplicas(ctx, &ppvpa); err != nil {
@@ -232,6 +243,83 @@ func (r *PerPodVerticalPodAutoscalerReconciler) reconcileRecommendation(ctx cont
 	patch := ppvpa.DeepCopy()
 	patch.Status.DefaultRecommendation = rec
 	return r.Status().Patch(ctx, patch, client.MergeFrom(ppvpa))
+}
+
+// reconcileAnomalies detects pods whose usage exceeds the aggregate
+// upperBound for longer than anomalyEvictionTimeoutSeconds and sets or
+// clears the Anomalous condition on each PRR.
+func (r *PerPodVerticalPodAutoscalerReconciler) reconcileAnomalies(ctx context.Context, ppvpa *autoscalingv1alpha1.PerPodVerticalPodAutoscaler) error {
+	if ppvpa.Status.DefaultRecommendation == nil {
+		return nil
+	}
+
+	prrs, err := r.listOwnedPRRs(ctx, ppvpa)
+	if err != nil {
+		return err
+	}
+
+	timeout := ppvpa.Spec.UpdatePolicy.AnomalyEvictionTimeoutSeconds
+	patches := DetectAnomalies(prrs, ppvpa.Status.DefaultRecommendation, timeout, time.Now())
+
+	for _, p := range patches {
+		if err := r.applyAnomalyPatch(ctx, p); err != nil {
+			logf.FromContext(ctx).Error(err, "applying anomaly patch", "prr", p.Name)
+			// Continue with remaining PRRs; a single failure should not block others.
+		}
+	}
+	return nil
+}
+
+// applyAnomalyPatch fetches the current PRR, applies anomaly status changes,
+// and patches the status.
+func (r *PerPodVerticalPodAutoscalerReconciler) applyAnomalyPatch(ctx context.Context, p PRRAnomalyPatch) error {
+	var prr autoscalingv1alpha1.PodResourceRecommendation
+	if err := r.Get(ctx, types.NamespacedName{Namespace: p.Namespace, Name: p.Name}, &prr); err != nil {
+		return client.IgnoreNotFound(err)
+	}
+
+	patch := prr.DeepCopy()
+
+	if p.AnomalyExceedSince != nil {
+		patch.Status.AnomalyExceedSince = p.AnomalyExceedSince
+	}
+	if p.ClearAnomalyExceedSince {
+		patch.Status.AnomalyExceedSince = nil
+	}
+
+	now := metav1.Now()
+	if p.SetAnomalousTrue {
+		setPRRCondition(&patch.Status.Conditions, autoscalingv1alpha1.PRRConditionAnomalous, metav1.ConditionTrue, now)
+	}
+	if p.SetAnomalousFalse {
+		// Only update if currently True to avoid unnecessary writes.
+		if hasCondition(prr.Status.Conditions, autoscalingv1alpha1.PRRConditionAnomalous) {
+			setPRRCondition(&patch.Status.Conditions, autoscalingv1alpha1.PRRConditionAnomalous, metav1.ConditionFalse, now)
+		}
+	}
+
+	return r.Status().Patch(ctx, patch, client.MergeFrom(&prr))
+}
+
+// setPRRCondition sets or updates a condition in the conditions slice.
+func setPRRCondition(conditions *[]metav1.Condition, condType string, status metav1.ConditionStatus, now metav1.Time) {
+	for i, c := range *conditions {
+		if c.Type == condType {
+			if c.Status != status {
+				(*conditions)[i].Status = status
+				(*conditions)[i].LastTransitionTime = now
+				(*conditions)[i].ObservedGeneration = 0
+			}
+			return
+		}
+	}
+	*conditions = append(*conditions, metav1.Condition{
+		Type:               condType,
+		Status:             status,
+		LastTransitionTime: now,
+		Reason:             "AnomalyDetection",
+		Message:            "usage exceeds aggregate upperBound",
+	})
 }
 
 // reconcileReplicas keeps Deployment.spec.replicas in lock-step with

@@ -57,9 +57,11 @@ spec:
     cpu:  
       scaleUpPSI: 10.0  
       scaleDownBufferDropPercentage: 20  
+      requestUtilizationThresholdPercentage: 80
     memory:  
       scaleUpPSI: 5.0  
       watermarkDecayWindowHours: 24 \# Slowly lower the high-watermark if not hit within 24h  
+      requestUtilizationThresholdPercentage: 80  
         
   # HPA writes Scale.spec.replicas → spec.targetReplicas (see §4).
   targetReplicas: 5
@@ -93,15 +95,32 @@ spec:
   targetPodName: web-app-7b5x  
 status:  
   contentionHighWatermarks:  
-    podLevel: { memory: 3.5Gi, lastUpdated: "2026-05-18T12:00:00Z" }  
+    podLevel: { memory: 3.5Gi, cpu: "1.5", lastUpdated: "2026-05-18T12:00:00Z" }  
+    containerLevel:  
+      \- containerName: web-app  
+        memory: 3.2Gi  
+        cpu: "1.4"  
+        lastUpdated: "2026-05-18T12:00:00Z"  
   observedPeak:  
     podLevel: { memory: 4Gi }  
+    containers:  
+      \- containerName: web-app  
+        memory: 3.8Gi  
   podLevelTarget: { memory: 4.6Gi }  
   containerRecommendations:  
     \- containerName: web-app  
+      lowerBound: { cpu: 1.5 }  
       target: { cpu: 2 }   
       uncappedTarget: { cpu: 2 }  
+      upperBound: { cpu: 2.5 }  
   histogramCheckpoint: "eA1B2C3D..." 
+  anomalyExceedSince: "2026-05-18T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+      lastTransitionTime: "2026-05-18T12:00:00Z"
+      reason: HistogramRestored
+      message: "Histogram checkpoint restored successfully"
 
 ### **C. PerPodVerticalPodAutoscalerCheckpoint (The Workload Checkpoint)**
 
@@ -115,8 +134,17 @@ metadata:
     \- apiVersion: autoscaling.brycemclachlan.me/v1alpha1  
       kind: PerPodVerticalPodAutoscaler  
       name: web-app-ppvpa  
+spec:  
+  ppvpaRef: web-app-ppvpa  
 status:  
   aggregateHistogramCheckpoint: "fE4D5C6B..."
+  lastUpdateTime: "2026-05-18T12:00:00Z"
+  conditions:
+    - type: Ready
+      status: "True"
+      lastTransitionTime: "2026-05-18T12:00:00Z"
+      reason: CheckpointSynced
+      message: "Aggregate checkpoint is up to date"
 
 ## **3\. Architecture Components**
 
@@ -130,7 +158,7 @@ status:
   * *CPU:* Continuous decaying stream.  
   * *Memory:* **Interval peak extraction** (stores only the absolute highest memory peak per defined window).  
 * **OOM Bump-Up Mechanism:** On OOMKilled, injects synthetic memory sample (![][image1]).  
-* **Dual-Trigger Scale-Up:** Reactive (PSI) \+ Proactive (utilization vs. requests).  
+* **Dual-Trigger Scale-Up:** Reactive (PSI) \+ Proactive (utilization vs. requests using requestUtilizationThresholdPercentage).
 * **High-Watermark & Peak-Bound Scale-Down:**  
   * *Memory:* Strictly bounded by observedPeak \+ safetyMarginPercentage.  
 * **Patch Ordering & Server-Side Congestion Control:**  
@@ -144,7 +172,7 @@ status:
 * **Aggregation:** Merges PRR telemetry into a single, workload-wide decaying histogram.  
 * **Establishing the "Safe Zone":** Applies configured percentiles for target/bounds.  
 * **History-Based Confidence Multipliers:** Scaled by ![][image2].  
-* **The Margin Estimator:** Applies safetyMarginPercentage as a static pad on all bounds.  
+* **The Margin Estimator:** Applies safetyMarginPercentage as a static pad on LowerBound, Target, and UpperBound. UncappedTarget is deliberately excluded to preserve the pure percentile calculation.  
 * **UncappedTarget:** Exposes the pure calculation, allowing SREs to spot truncated limits.  
 * **Anomaly Detection:** If pod usage exceeds aggregate upperBound for longer than anomalyEvictionTimeoutSeconds, it flags the PRR for eviction.
 
@@ -159,7 +187,7 @@ status:
 
 #### **D. The Admission Controller (Mutating Webhook)**
 
-* **Smart Injection:** If temporaryReplicas \> 0 OR any sibling PRRs are Infeasible or Anomalous, injects the upperBound to give replacement pods headroom. Otherwise, injects the target \+ MarginEstimator padding.
+* **Smart Injection:** If temporaryReplicas \> 0 OR any sibling PRRs are Infeasible or Anomalous, injects the upperBound to give replacement pods headroom. Otherwise, injects the target (which already includes the MarginEstimator padding from the recommender pipeline).
 
 ## **4\. Ecosystem Integration**
 
@@ -177,12 +205,12 @@ The node-agent DaemonSet generates the hottest traffic in the system: every node
 
 ### **A. `pp-vpa-control-plane`**
 
-* **PriorityLevelConfiguration:** `Limited`, `assuredConcurrencyShares: 30`, queued (`queueLengthLimit: 100`, `queues: 32`, `handSize: 6`). Controller-manager work is bursty (reconcile-on-event) but bounded by replica counts; queueing absorbs surges.  
+* **PriorityLevelConfiguration:** `Limited`, `nominalConcurrencyShares: 30`, queued (`queueLengthLimit: 100`, `queues: 32`, `handSize: 6`). Controller-manager work is bursty (reconcile-on-event) but bounded by replica counts; queueing absorbs surges.  
 * **FlowSchema:** `matchingPrecedence: 800`, `distinguisherMethod.type: ByUser`. Subjects: `ServiceAccount pp-vpa-system/pp-vpa-manager`. Verbs cover the three CRDs plus `pods`, `pods/eviction`, `deployments/scale`, `events`.
 
 ### **B. `pp-vpa-node-agents`**
 
-* **PriorityLevelConfiguration:** `Limited`, `assuredConcurrencyShares: 50`, queued (`queueLengthLimit: 200`, `queues: 128`, `handSize: 8`). Traffic scales O(nodes); wider shuffle-sharding fan-out so one chatty node-agent cannot starve the others.  
+* **PriorityLevelConfiguration:** `Limited`, `nominalConcurrencyShares: 50`, queued (`queueLengthLimit: 200`, `queues: 128`, `handSize: 8`). Traffic scales O(nodes); wider shuffle-sharding fan-out so one chatty node-agent cannot starve the others.  
 * **FlowSchema:** `matchingPrecedence: 850`, `distinguisherMethod.type: ByUser` — **the load-bearing line.** Inside the shared priority level, APF fair-queues by user identity. Each node-agent pod runs with its own bound ServiceAccount token, shuffle-sharded into its own queue. Result: one runaway node-agent (e.g., a node with continuous PSI spikes) cannot starve other nodes; all nodes get fair access to the level's concurrency budget. Subjects: `ServiceAccount pp-vpa-system/pp-vpa-node-agent`. Writes: `patch`/`update` on `pods/resize`, `podresourcerecommendations/status`. Reads: `get`/`list`/`watch` on `pods`, `podresourcerecommendations`, `perpodverticalpodautoscalers`, colocated in the same flow so reads can't be throttled separately during write-heavy phases.
 
 ### **C. Why two levels rather than one**

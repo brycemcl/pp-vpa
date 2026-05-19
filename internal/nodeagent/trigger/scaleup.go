@@ -6,6 +6,12 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 // Package trigger implements the dual-signal scale-up trigger (PSI +
@@ -21,12 +27,13 @@ type ScaleUpDecision struct {
 }
 
 // EvaluateScaleUp fires when PSI.avg10 exceeds the configured threshold OR
-// when utilization exceeds the proactive threshold (requests * proactivePct).
-func EvaluateScaleUp(p psi.Line, psiThreshold float64, utilization, requests, proactivePct float64) ScaleUpDecision {
+// when utilization exceeds the request utilization threshold
+// (requests * requestUtilThresholdPct / 100).
+func EvaluateScaleUp(p psi.Line, psiThreshold float64, utilization, requests, requestUtilThresholdPct float64) ScaleUpDecision {
 	if p.Avg10 >= psiThreshold && psiThreshold > 0 {
 		return ScaleUpDecision{Fire: true, Reason: "psi"}
 	}
-	if requests > 0 && utilization >= requests*proactivePct/100.0 && proactivePct > 0 {
+	if requests > 0 && utilization >= requests*requestUtilThresholdPct/100.0 && requestUtilThresholdPct > 0 {
 		return ScaleUpDecision{Fire: true, Reason: "utilization"}
 	}
 	return ScaleUpDecision{}

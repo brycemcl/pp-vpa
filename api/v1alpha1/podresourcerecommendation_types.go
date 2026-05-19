@@ -25,6 +25,7 @@ import (
 const (
 	PRRConditionAnomalous           = "Anomalous"
 	PRRConditionInfeasible          = "Infeasible"
+	PRRConditionEvicting            = "Evicting"
 	PRRConditionPodLevelUnsupported = "PodLevelUnsupported"
 )
 
@@ -100,6 +101,11 @@ type PodResourceRecommendationStatus struct {
 	// decaying histogram for this pod.
 	// +optional
 	HistogramCheckpoint string `json:"histogramCheckpoint,omitempty"`
+
+	// AnomalyExceedSince records when the pod's usage first exceeded the
+	// aggregate upperBound. Cleared when usage drops back within bounds.
+	// +optional
+	AnomalyExceedSince *metav1.Time `json:"anomalyExceedSince,omitempty"`
 
 	// +listType=map
 	// +listMapKey=type

@@ -22,14 +22,18 @@ spec:
         - verbs: ["patch", "update"]
           apiGroups: [""]
           resources: ["pods/resize"]
+          namespaces: ["*"]
         - verbs: ["patch", "update"]
           apiGroups: ["autoscaling.brycemclachlan.me"]
           resources: ["podresourcerecommendations/status"]
+          namespaces: ["*"]
         - verbs: ["get", "list", "watch"]
           apiGroups: [""]
           resources: ["pods"]
+          namespaces: ["*"]
         - verbs: ["get", "list", "watch"]
           apiGroups: ["autoscaling.brycemclachlan.me"]
           resources:
             - podresourcerecommendations
             - perpodverticalpodautoscalers
+          namespaces: ["*"]

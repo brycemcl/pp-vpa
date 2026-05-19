@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# pre-commit hook: reject commits with unformatted Go files.
+
+set -euo pipefail
+
+# Find staged .go files.
+staged=$(git diff --cached --name-only --diff-filter=ACM -- '*.go')
+if [ -z "$staged" ]; then
+  exit 0
+fi
+
+# Check gofmt. -l lists files that need formatting.
+unformatted=$(gofmt -l $staged)
+if [ -z "$unformatted" ]; then
+  exit 0
+fi
+
+echo "pre-commit: gofmt found issues in the following files:" >&2
+echo "$unformatted" >&2
+echo "" >&2
+echo "Run:  gofmt -w $unformatted" >&2
+exit 1

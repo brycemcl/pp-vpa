@@ -1,35 +1,65 @@
 name: e2e
+# Slow checks (kind cluster + scenario suite). Runs only on PRs targeting
+# main — not on direct branch pushes, not on a cron, not on manual dispatch.
 on:
   pull_request:
-    types: [labeled]
-  schedule:
-    - cron: "0 4 * * *"  # nightly
+    branches: ["main"]
+
+concurrency:
+  group: e2e-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
   kind:
-    if: github.event.label.name == 'e2e' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
+          cache: true
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.0
       - uses: helm/kind-action@v1
         with:
           config: hack/e2e/kind-config.yaml
+          cluster_name: pp-vpa-e2e
+
       - name: build image and load into kind
         run: |
           docker build -t pp-vpa:dev .
-          kind load docker-image pp-vpa:dev --name chart-testing
+          kind load docker-image pp-vpa:dev --name pp-vpa-e2e
+
       - name: install cert-manager
         run: |
           helm repo add jetstack https://charts.jetstack.io
           helm install cert-manager jetstack/cert-manager \
             --namespace cert-manager --create-namespace \
-            --set crds.enabled=true
+            --set crds.enabled=true --wait
+
       - name: install pp-vpa
         run: |
           helm install pp-vpa charts/pp-vpa \
             --set image.repository=pp-vpa --set image.tag=dev \
-            --create-namespace --namespace pp-vpa-system
+            --namespace pp-vpa-system --create-namespace --wait
+
       - name: run e2e
-        run: go test -tags=e2e -count=1 ./test/e2e/...
+        env:
+          KIND_CLUSTER: pp-vpa-e2e
+          CERT_MANAGER_INSTALL_SKIP: "true"
+        run: go test -tags=e2e -count=1 -timeout 20m ./test/e2e/...
+
+      - name: dump diagnostics on failure
+        if: failure()
+        run: |
+          kubectl get pods -A -o wide || true
+          kubectl -n pp-vpa-system describe deploy pp-vpa-manager || true
+          kubectl -n pp-vpa-system logs deploy/pp-vpa-manager --tail=200 || true
+          kubectl -n pp-vpa-system logs ds/pp-vpa-node-agent --tail=200 || true
+          kubectl -n pp-vpa-system logs curl-metrics --tail=50 || true
+          kubectl -n pp-vpa-system describe pod curl-metrics || true

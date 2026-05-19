@@ -654,6 +654,10 @@ func (in *PodResourceRecommendationStatus) DeepCopyInto(out *PodResourceRecommen
 			(*in)[i].DeepCopyInto(&(*out)[i])
 		}
 	}
+	if in.AnomalyExceedSince != nil {
+		in, out := &in.AnomalyExceedSince, &out.AnomalyExceedSince
+		*out = (*in).DeepCopy()
+	}
 	if in.Conditions != nil {
 		in, out := &in.Conditions, &out.Conditions
 		*out = make([]metav1.Condition, len(*in))

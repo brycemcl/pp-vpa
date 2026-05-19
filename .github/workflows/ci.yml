@@ -1,25 +1,86 @@
 name: ci
+# Fast checks. Required gate for merges. PR-only — nothing runs on main
+# itself other than release.yml.
 on:
-  push:
-    branches: ["main"]
   pull_request:
     branches: ["main"]
+
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
 jobs:
-  build-test:
+  lint:
+    name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-      - name: vet
+      # Use the project's pinned linter (Makefile installs the version that
+      # matches go.mod's Go toolchain) instead of golangci-lint-action so
+      # local `make lint` and CI lint stay in lock-step.
+      - name: make lint
+        run: make lint
+
+  unit:
+    name: vet + unit + envtest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: go vet
         run: go vet ./...
-      - name: unit tests
-        run: go test -race ./...
       - name: build
         run: go build ./...
-      - name: lint
-        uses: golangci/golangci-lint-action@v6
+      # `make test` provisions envtest binaries and runs ginkgo + race unit tests.
+      - name: make test
+        run: make test
+
+  manifests:
+    name: manifest drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-go@v6
         with:
-          version: v1.62.0
+          go-version-file: go.mod
+          cache: true
+      # PRs that change api/v1alpha1/*_types.go must re-run controller-gen.
+      # This job fails if the generated CRDs/deepcopy lag behind the source.
+      - name: regenerate
+        run: make generate manifests
+      - name: assert clean tree
+        run: |
+          if ! git diff --exit-code; then
+            echo "::error::Generated manifests are out of date. Run 'make generate manifests' and commit the result."
+            exit 1
+          fi
+
+  helm:
+    name: helm lint + template
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: azure/setup-helm@v5
+        with:
+          version: v3.16.0
+      - name: helm lint
+        run: helm lint charts/pp-vpa
+      - name: helm template smoke
+        # Render with defaults and a couple of common toggle combos to confirm
+        # the templates parse. --kube-version is required because Chart.yaml
+        # pins kubeVersion >= 1.33.0 and helm's default capability stub is
+        # older than that.
+        run: |
+          helm template demo charts/pp-vpa --kube-version 1.36.0 > /dev/null
+          helm template demo charts/pp-vpa --kube-version 1.36.0 --set apf.enabled=false > /dev/null
+          helm template demo charts/pp-vpa --kube-version 1.36.0 --set nodeAgent.enabled=false > /dev/null

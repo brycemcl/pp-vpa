@@ -104,14 +104,19 @@ var _ = AfterSuite(func() {
 // properly set up, run 'make setup-envtest' beforehand.
 func getFirstFoundEnvTestBinaryDir() string {
 	basePath := filepath.Join("..", "..", "bin", "k8s")
-	entries, err := os.ReadDir(basePath)
+	absBasePath, err := filepath.Abs(basePath)
 	if err != nil {
-		logf.Log.Error(err, "Failed to read directory", "path", basePath)
+		logf.Log.Error(err, "Failed to resolve absolute path", "path", basePath)
+		return ""
+	}
+	entries, err := os.ReadDir(absBasePath)
+	if err != nil {
+		logf.Log.Error(err, "Failed to read directory", "path", absBasePath)
 		return ""
 	}
 	for _, entry := range entries {
 		if entry.IsDir() {
-			return filepath.Join(basePath, entry.Name())
+			return filepath.Join(absBasePath, entry.Name())
 		}
 	}
 	return ""

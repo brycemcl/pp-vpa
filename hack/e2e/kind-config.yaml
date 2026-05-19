@@ -1,13 +1,29 @@
 kind: Cluster
 apiVersion: kind.x-k8s.io/v1alpha4
-# v1.36 image so KEP-1287 in-place resize is GA and pod-level resources are supported.
+# v1.36 isn't published as a kindest/node image yet (kind v0.31.0's newest is
+# v1.35.0). Pin to v1.35.0 by sha256 digest per kind's release notes and
+# enable the feature gates we need explicitly:
+#   InPlacePodVerticalScaling — GA in v1.36; beta in v1.33–v1.35
+#   PodLevelResources         — beta/optional in v1.34–v1.35
+# Bump to v1.36 once kindest/node:v1.36.x ships.
 nodes:
   - role: control-plane
-    image: kindest/node:v1.36.0
+    image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
   - role: worker
-    image: kindest/node:v1.36.0
+    image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
   - role: worker
-    image: kindest/node:v1.36.0
+    image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
 featureGates:
+  # In-place container resize. Alpha 1.27, beta 1.33, GA 1.36.
   InPlacePodVerticalScaling: true
+  # In-place resize of pod-level resources (KEP-2837 follow-on). Required
+  # for the pod-level path the recommender writes when PodLevelResources is
+  # enabled.
+  InPlacePodLevelResourcesVerticalScaling: true
+  # Pod-level resource requests/limits at the .spec.resources level. Beta in
+  # v1.34/1.35; GA target v1.36.
   PodLevelResources: true
+  # Lets nodes advertise opt-in feature availability to the apiserver so the
+  # node-agent's compat probe can act on declared support instead of guessing
+  # from kubelet config.
+  NodeDeclaredFeatures: true

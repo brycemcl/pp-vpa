@@ -6,6 +6,12 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 // Package compat probes node and cluster capabilities to decide between
@@ -21,9 +27,10 @@ import (
 
 // NodeCapabilities describes what an individual node supports.
 type NodeCapabilities struct {
-	CgroupV2         bool
-	SwapAccounting   bool
-	StaticCPUManager bool
+	CgroupV2            bool
+	SwapAccounting      bool
+	StaticCPUManager    bool
+	StaticMemoryManager bool
 }
 
 // ProbeNode inspects the kubelet config (default /var/lib/kubelet/config.yaml)
@@ -49,13 +56,16 @@ func ProbeNode(cgroupRoot, kubeletConfigPath string) (NodeCapabilities, error) {
 		}
 		return caps, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	b, err := io.ReadAll(f)
 	if err != nil {
 		return caps, err
 	}
 	if strings.Contains(string(b), "cpuManagerPolicy: static") {
 		caps.StaticCPUManager = true
+	}
+	if strings.Contains(string(b), "memoryManagerPolicy: static") {
+		caps.StaticMemoryManager = true
 	}
 	return caps, nil
 }

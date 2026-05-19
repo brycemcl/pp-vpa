@@ -21,64 +21,138 @@ import (
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
-	"k8s.io/apimachinery/pkg/api/errors"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	autoscalingv1alpha1 "github.com/brycemclachlan/pp-vpa/api/v1alpha1"
+	"github.com/brycemclachlan/pp-vpa/internal/eviction"
+	autoscalingv1 "k8s.io/api/autoscaling/v1"
 )
 
 var _ = Describe("PodResourceRecommendation Controller", func() {
-	Context("When reconciling a resource", func() {
-		const resourceName = "test-resource"
+	ctx := context.Background()
 
-		ctx := context.Background()
+	Context("PRR not found", func() {
+		It("should return without error", func() {
+			r := &PodResourceRecommendationReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				Anomaly:          &eviction.AnomalyHandler{Client: k8sClient},
+				BudgetedFallback: &eviction.BudgetedHandler{Client: k8sClient},
+			}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: "nonexistent", Namespace: "default"}})
+			Expect(err).NotTo(HaveOccurred())
+		})
+	})
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
-		}
-		podresourcerecommendation := &autoscalingv1alpha1.PodResourceRecommendation{}
+	Context("PRR with no conditions", func() {
+		const prrName = "test-prr-nocond"
+		const ppvpaName = "test-ppvpa-prr-nocond"
+		const ns = "default"
 
 		BeforeEach(func() {
-			By("creating the custom resource for the Kind PodResourceRecommendation")
-			err := k8sClient.Get(ctx, typeNamespacedName, podresourcerecommendation)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &autoscalingv1alpha1.PodResourceRecommendation{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					// TODO(user): Specify other spec details if needed.
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
+			ppvpa := &autoscalingv1alpha1.PerPodVerticalPodAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{Name: ppvpaName, Namespace: ns},
+				Spec: autoscalingv1alpha1.PerPodVerticalPodAutoscalerSpec{
+					TargetRef: autoscalingv1.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "deploy"},
+				},
 			}
+			Expect(k8sClient.Create(ctx, ppvpa)).To(Succeed())
+
+			// Fetch to get the server-assigned UID.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ppvpaName, Namespace: ns}, ppvpa)).To(Succeed())
+
+			prr := &autoscalingv1alpha1.PodResourceRecommendation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      prrName,
+					Namespace: ns,
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: "PerPodVerticalPodAutoscaler", Name: ppvpaName, APIVersion: "autoscaling.brycemclachlan.me/v1alpha1", UID: ppvpa.UID},
+					},
+				},
+				Spec: autoscalingv1alpha1.PodResourceRecommendationSpec{TargetPodName: "test-pod"},
+			}
+			Expect(k8sClient.Create(ctx, prr)).To(Succeed())
 		})
 
 		AfterEach(func() {
-			// TODO(user): Cleanup logic after each test, like removing the resource instance.
-			resource := &autoscalingv1alpha1.PodResourceRecommendation{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
-			Expect(err).NotTo(HaveOccurred())
-
-			By("Cleanup the specific resource instance PodResourceRecommendation")
-			Expect(k8sClient.Delete(ctx, resource)).To(Succeed())
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.PodResourceRecommendation{ObjectMeta: metav1.ObjectMeta{Name: prrName, Namespace: ns}})
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.PerPodVerticalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: ppvpaName, Namespace: ns}})
 		})
-		It("should successfully reconcile the resource", func() {
-			By("Reconciling the created resource")
-			controllerReconciler := &PodResourceRecommendationReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
-			}
 
-			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
-			})
+		It("should reconcile without error when no conditions are set", func() {
+			r := &PodResourceRecommendationReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				Anomaly:          &eviction.AnomalyHandler{Client: k8sClient},
+				BudgetedFallback: &eviction.BudgetedHandler{Client: k8sClient},
+			}
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: prrName, Namespace: ns}})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+		})
+	})
+
+	Context("PRR with Anomalous condition", func() {
+		const prrName = "test-prr-anomalous"
+		const ppvpaName = "test-ppvpa-anomalous"
+		const ns = "default"
+
+		BeforeEach(func() {
+			ppvpa := &autoscalingv1alpha1.PerPodVerticalPodAutoscaler{
+				ObjectMeta: metav1.ObjectMeta{Name: ppvpaName, Namespace: ns},
+				Spec: autoscalingv1alpha1.PerPodVerticalPodAutoscalerSpec{
+					TargetRef: autoscalingv1.CrossVersionObjectReference{APIVersion: "apps/v1", Kind: "Deployment", Name: "deploy"},
+				},
+			}
+			Expect(k8sClient.Create(ctx, ppvpa)).To(Succeed())
+
+			// Fetch to get the server-assigned UID.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: ppvpaName, Namespace: ns}, ppvpa)).To(Succeed())
+
+			prr := &autoscalingv1alpha1.PodResourceRecommendation{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:      prrName,
+					Namespace: ns,
+					OwnerReferences: []metav1.OwnerReference{
+						{Kind: "PerPodVerticalPodAutoscaler", Name: ppvpaName, APIVersion: "autoscaling.brycemclachlan.me/v1alpha1", UID: ppvpa.UID},
+					},
+				},
+				Spec: autoscalingv1alpha1.PodResourceRecommendationSpec{TargetPodName: "test-pod"},
+			}
+			Expect(k8sClient.Create(ctx, prr)).To(Succeed())
+
+			// Re-fetch to get the server-assigned ResourceVersion before status update.
+			Expect(k8sClient.Get(ctx, types.NamespacedName{Name: prrName, Namespace: ns}, prr)).To(Succeed())
+
+			// Set Anomalous condition with required fields.
+			prr.Status.Conditions = []metav1.Condition{
+				{
+					Type:               autoscalingv1alpha1.PRRConditionAnomalous,
+					Status:             metav1.ConditionTrue,
+					Reason:             "TestAnomaly",
+					LastTransitionTime: metav1.Now(),
+				},
+			}
+			Expect(k8sClient.Status().Update(ctx, prr)).To(Succeed())
+		})
+
+		AfterEach(func() {
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.PodResourceRecommendation{ObjectMeta: metav1.ObjectMeta{Name: prrName, Namespace: ns}})
+			_ = k8sClient.Delete(ctx, &autoscalingv1alpha1.PerPodVerticalPodAutoscaler{ObjectMeta: metav1.ObjectMeta{Name: ppvpaName, Namespace: ns}})
+		})
+
+		It("should reconcile and attempt anomaly eviction", func() {
+			r := &PodResourceRecommendationReconciler{
+				Client:           k8sClient,
+				Scheme:           k8sClient.Scheme(),
+				Anomaly:          &eviction.AnomalyHandler{Client: k8sClient},
+				BudgetedFallback: &eviction.BudgetedHandler{Client: k8sClient},
+			}
+			// The reconcile should not error even though the pod doesn't exist.
+			_, err := r.Reconcile(ctx, reconcile.Request{NamespacedName: types.NamespacedName{Name: prrName, Namespace: ns}})
+			Expect(err).NotTo(HaveOccurred())
 		})
 	})
 })
