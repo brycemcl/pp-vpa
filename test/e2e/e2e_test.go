@@ -207,7 +207,7 @@ var _ = Describe("Manager", Ordered, func() {
 							"image": "curlimages/curl:latest",
 							"command": ["/bin/sh", "-c"],
 							"args": [
-								"for i in $(seq 1 30); do echo \"attempt $i\"; curl -sv http://%s.%s.svc.cluster.local/metrics 2>&1 && exit 0 || sleep 2; done; exit 1"
+								"for i in $(seq 1 30); do echo \"attempt $i\"; curl -sv http://%s.%s.svc.cluster.local:8080/metrics 2>&1 && exit 0 || sleep 2; done; exit 1"
 							],
 							"securityContext": {
 								"allowPrivilegeEscalation": false,
