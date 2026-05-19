@@ -6,6 +6,12 @@ you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
     http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 */
 
 // Package nodeagent implements the per-node DaemonSet entrypoint: poll PSI,
@@ -186,14 +192,14 @@ func (a *Agent) EnsurePod(ctx context.Context, p corev1.Pod, prr autoscalingv1al
 		uid: uid, namespace: p.Namespace, name: p.Name, prrName: prr.Name,
 		qos: p.Status.QOSClass, cgroupPath: slice,
 		cpu: cs, mem: mp,
-		cpuWatermark:    watermark.New(time.Hour),
-		memWatermark:    watermark.New(24 * time.Hour),
-		cpuRequest:      cpuReq,
-		memRequest:      memReq,
+		cpuWatermark:               watermark.New(time.Hour),
+		memWatermark:               watermark.New(24 * time.Hour),
+		cpuRequest:                 cpuReq,
+		memRequest:                 memReq,
 		cpuRequestUtilThresholdPct: cpuRequestUtilThresholdPct,
 		memRequestUtilThresholdPct: memRequestUtilThresholdPct,
-		cpuPSIThreshold: cpuPSIThreshold,
-		memPSIThreshold: memPSIThreshold,
+		cpuPSIThreshold:            cpuPSIThreshold,
+		memPSIThreshold:            memPSIThreshold,
 	}
 	if prr.Status.HistogramCheckpoint != "" {
 		if h, err := histogram.Decode(prr.Status.HistogramCheckpoint); err == nil {
