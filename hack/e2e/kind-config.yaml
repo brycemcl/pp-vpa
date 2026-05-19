@@ -14,5 +14,16 @@ nodes:
   - role: worker
     image: kindest/node:v1.35.0@sha256:452d707d4862f52530247495d180205e029056831160e22870e37e3f6c1ac31f
 featureGates:
+  # In-place container resize. Alpha 1.27, beta 1.33, GA 1.36.
   InPlacePodVerticalScaling: true
+  # In-place resize of pod-level resources (KEP-2837 follow-on). Required
+  # for the pod-level path the recommender writes when PodLevelResources is
+  # enabled.
+  InPlacePodLevelResourcesVerticalScaling: true
+  # Pod-level resource requests/limits at the .spec.resources level. Beta in
+  # v1.34/1.35; GA target v1.36.
   PodLevelResources: true
+  # Lets nodes advertise opt-in feature availability to the apiserver so the
+  # node-agent's compat probe can act on declared support instead of guessing
+  # from kubelet config.
+  NodeDeclaredFeatures: true
