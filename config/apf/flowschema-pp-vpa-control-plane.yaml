@@ -25,12 +25,16 @@ spec:
             - podresourcerecommendations/status
             - perpodverticalpodautoscalercheckpoints
             - perpodverticalpodautoscalercheckpoints/status
+          namespaces: ["*"]
         - verbs: ["get", "list", "watch", "patch", "update"]
           apiGroups: [""]
           resources: ["pods"]
+          namespaces: ["*"]
         - verbs: ["create"]
           apiGroups: [""]
           resources: ["pods/eviction", "events"]
+          namespaces: ["*"]
         - verbs: ["get", "list", "watch", "patch", "update"]
           apiGroups: ["apps"]
           resources: ["deployments", "deployments/scale"]
+          namespaces: ["*"]
