@@ -80,8 +80,11 @@ jobs:
       - name: helm lint
         run: helm lint charts/pp-vpa
       - name: helm template smoke
-        # Render with defaults and with apf disabled to make sure both modes parse.
+        # Render with defaults and a couple of common toggle combos to confirm
+        # the templates parse. --kube-version is required because Chart.yaml
+        # pins kubeVersion >= 1.33.0 and helm's default capability stub is
+        # older than that.
         run: |
-          helm template demo charts/pp-vpa > /dev/null
-          helm template demo charts/pp-vpa --set apf.enabled=false > /dev/null
-          helm template demo charts/pp-vpa --set nodeAgent.enabled=false > /dev/null
+          helm template demo charts/pp-vpa --kube-version 1.36.0 > /dev/null
+          helm template demo charts/pp-vpa --kube-version 1.36.0 --set apf.enabled=false > /dev/null
+          helm template demo charts/pp-vpa --kube-version 1.36.0 --set nodeAgent.enabled=false > /dev/null
